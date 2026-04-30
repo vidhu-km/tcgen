@@ -1,11 +1,12 @@
 streamlit
 pandas
 numpy
-geopandas
-shapely
-pyproj
-fiona
 plotly
 scipy
 openpyxl
 xlsxwriter
+
+geopandas
+shapely
+pyproj
+fiona
