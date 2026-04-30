@@ -410,7 +410,7 @@ def main():
                                           ["P25", "P50", "P75"],
                                           default=["P25", "P50", "P75"])
     overlay_rtc = st.sidebar.checkbox("Overlay corporate RTC curves", value=True)
-    show_priors = st.sidebar.checkbox("Show priors (75/125/175 Mbbl)", value=True)
+    show_priors = st.sidebar.checkbox("Show priors (75/100/125 Mbbl)", value=True)
 
     # ── Analog matching ────────────────────────────────────────────────────
     analog_map = {}
@@ -478,7 +478,7 @@ def main():
             st.markdown("**Priors vs Computed (Mbbl):**")
             pri = pd.DataFrame({
                 "Percentile": ["P25", "P50", "P75"],
-                "Prior": [75, 125, 175],
+                "Prior": [75, 100, 125],
                 "Computed": [eur_p25/1000, eur_p50/1000, eur_p75/1000],
                 "Δ vs Prior": [eur_p25/1000 - 75, eur_p50/1000 - 125, eur_p75/1000 - 175],
             })
