@@ -1,20 +1,3 @@
-"""
-2-Mile Type Curve Generator — Empirical Uplift Edition
-======================================================
-Workflow:
-  1. Load 1-mile & 2-mile wells from w.xlsx (+ shapefiles).
-  2. For each 2-mile well, build an analog cohort of 1-mile wells
-     (Mode A: range-based  |  Mode B: geometric corridor).
-  3. Compute empirical uplift ratios (2-mile metric / median(1-mile comps))
-     normalized per-lateral-foot where appropriate.
-  4. Refine a type curve using production history from tcgenprod.xlsx:
-        - Fit Arps with b FIXED = 0.95
-        - qi = 0.5*peak-month + 0.25*month-before + 0.25*month-after
-               (daily averages, bbl/d)
-        - Di solved so that resulting EUR == empirically-uplifted target
-  5. Overlay the corporate RTC curves from rtc.xlsx for comparison.
-"""
-
 import io
 import math
 import os
@@ -33,7 +16,7 @@ warnings.filterwarnings("ignore")
 
 # ───────────────────────── Streamlit page ─────────────────────────
 st.set_page_config(
-    page_title="2-Mile Type Curve Generator (Empirical Uplift)",
+    page_title="2-Mile Type Curve Generator (Raw Uplift)",
     page_icon="🛢️",
     layout="wide",
 )
@@ -476,16 +459,14 @@ def range_match(target_row, df_1mile, tolerances, active_features):
     return df_1mile.loc[mask, "uwi"].tolist()
 
 # ───────────────────── Uplift engine ─────────────────────
-def compute_incremental(well_row, comparator_df, metric_keys, normalize_by_length=True):
+def compute_incremental(well_row, comparator_df, metric_keys):
     """
     Compare a 2-mile well to its 1-mile cohort.
-    Metrics are OPTIONALLY normalized by lateral length (to bbl/m) before
-    ratio'ing, then the 2-mile uplift ratio is expressed as:
-        ratio = (metric_2mi / Lh_2mi) / median(metric_1mi / Lh_1mi)
-    The scaled 2-mile-equivalent metric is:
-        metric_equivalent = ratio * median(metric_1mi / Lh_1mi) * Lh_2mi
-    (which equals metric_2mi when normalize_by_length=True, but the
-    per-metre ratio is a far more defensible uplift number.)
+    Raw comparison (no normalization) of uplift:
+      - Baseline: median of 1-mile comparator metric
+      - Incremental: 2-mile actual - baseline
+      - Uplift %: incremental / baseline * 100
+      - Ratio: 2-mile actual / baseline
     """
     result = {"uwi": well_row["uwi"]}
     Lh_2 = well_row.get("hz_length_m", np.nan)
@@ -500,28 +481,14 @@ def compute_incremental(well_row, comparator_df, metric_keys, normalize_by_lengt
             result[f"{mk}_ratio"]       = np.nan
             continue
 
-        if normalize_by_length and "hz_length_m" in comparator_df.columns \
-           and pd.notna(Lh_2) and Lh_2 > 0:
-            per_m_1 = (comparator_df[mk] / comparator_df["hz_length_m"]).replace(
-                [np.inf, -np.inf], np.nan).dropna()
-            if per_m_1.empty:
-                bl_total  = float(comparator_df[mk].median())
-                bl_perm   = np.nan
-                ratio     = float(val) / bl_total if bl_total else np.nan
-            else:
-                bl_perm   = float(per_m_1.median())
-                per_m_2   = val / Lh_2
-                ratio     = per_m_2 / bl_perm if bl_perm else np.nan
-                bl_total  = bl_perm * Lh_2
-        else:
-            bl_total = float(comparator_df[mk].median())
-            bl_perm  = np.nan
-            ratio    = float(val) / bl_total if bl_total else np.nan
+        # RAW: no per-length normalization
+        bl_total = float(comparator_df[mk].median())
 
         incr = float(val) - bl_total
         pct  = (incr / bl_total * 100) if bl_total else np.nan
+        ratio = float(val) / bl_total if bl_total else np.nan
+
         result[f"{mk}_baseline"]    = bl_total
-        result[f"{mk}_baseline_perm"] = bl_perm
         result[f"{mk}_incremental"] = incr
         result[f"{mk}_pct_uplift"]  = pct
         result[f"{mk}_ratio"]       = ratio
@@ -760,11 +727,11 @@ def derive_eur_targets(df_2mile: pd.DataFrame,
 
 # ───────────────────────── Main UI ─────────────────────────
 def main():
-    st.title("🛢️ 2-Mile Type Curve Generator — Empirical Uplift Edition")
+    st.title("🛢️ 2-Mile Type Curve Generator — Raw Uplift Edition")
     st.caption(
-        "Empirically derives 2-mile uplift from 1-mile analogs, refines a "
-        "type curve from production history (b fixed = 0.95), and benchmarks "
-        "it against corporate RTC curves."
+        "Raw comparison: 2-mile wells are compared against 1-mile wells using "
+        "unscaled, direct raw metrics. EUR, IP30/IP90, 6-month cum and 12-month cum "
+        "uplifts are shown with baselines (1-mile) and actuals (2-mile)."
     )
 
     well_df, geoms = load_and_assemble_wells()
@@ -894,15 +861,15 @@ def main():
             final_curves[label] = None
 
     # ───── Tabs ─────
-    tab_curves, tab_uplift, tab_rtc, tab_params, tab_well, tab_qc, tab_export = st.tabs([
+    tab_curves, tab_uplift, tab_rtc, tab_params, tab_well, tab_export = st.tabs([
         "📈 Type Curves", "📊 Uplift Analysis", "🆚 vs RTC",
         "🔧 Fitted Parameters", "🔍 Well-by-Well",
-        "🩺 QC & Diagnostics", "📥 Export",
+        "📥 Export",
     ])
 
     # ══════════ TAB: Type Curves ══════════
     with tab_curves:
-        st.header("Type Curves — derived from empirical uplift")
+        st.header("Type Curves — derived from raw uplift")
 
         c0 = st.columns(6)
         c0[0].metric("Mode", "A (Range)" if analysis_mode.startswith("Mode A") else "B (Corridor)")
@@ -918,7 +885,7 @@ def main():
   {qi_source}
 - **EUR distribution**:  
   {eur_source}  
-  _Outlier filter_: {'MAD |z|≤3.5 removed ' + str(n_removed) + ' point(s)' if apply_mad else 'disabled'}
+  _Note_: Uplift is computed using raw baselines (1-Mile median per metric) and raw 2-Mile actuals.
 - **Di** is back-solved for each percentile curve so that  
   $EUR_{{target}} = q_i\\cdot t_{{flat}} + \\int_0^{{t_{{lim}}}}\\!\\!q(t)\\,dt$
 - **b is locked at `{B_FIXED}` per spec** — no user override.
@@ -1074,12 +1041,10 @@ def main():
                 "80% CI (med)": f"{lo:.2f} — {hi:.2f}" if np.isfinite(lo) else "—",
             })
         if ratio_summary_rows:
-            st.subheader(f"Per-metre Uplift Ratios — 2mi / 1mi (b={B_FIXED} fixed)")
+            st.subheader(f"Raw Uplift Ratios — 2mi / 1mi (b={B_FIXED} fixed)")
             st.dataframe(pd.DataFrame(ratio_summary_rows),
                           use_container_width=True, hide_index=True)
-            st.caption("Ratios are normalized by lateral length (per-metre). "
-                       "Ratio=1.0 means no per-metre uplift; >1.0 means the "
-                       "2-mile is outperforming expected linear scaling.")
+            st.caption("Ratios are raw, no per-metre normalization. Ratio=1.0 means no uplift.")
 
         for mk in metric_keys:
             col_name = f"{mk}_incremental"
@@ -1301,18 +1266,16 @@ def main():
             for mk in metric_keys:
                 act   = sel_row.get(mk, np.nan)
                 bl    = sel_incr.iloc[0].get(f"{mk}_baseline", np.nan)
-                bperm = sel_incr.iloc[0].get(f"{mk}_baseline_perm", np.nan)
                 inc   = sel_incr.iloc[0].get(f"{mk}_incremental", np.nan)
                 pct   = sel_incr.iloc[0].get(f"{mk}_pct_uplift", np.nan)
                 rat   = sel_incr.iloc[0].get(f"{mk}_ratio", np.nan)
                 ir.append({
                     "Metric":         PERF_METRICS[mk],
                     "2-Mile Actual":  f"{act:,.0f}" if pd.notna(act) else "—",
-                    "1-Mile Baseline":f"{bl:,.0f}"  if pd.notna(bl)  else "—",
-                    "per-m baseline": f"{bperm:.2f}" if pd.notna(bperm) else "—",
+                    "1-Mile Baseline (Raw)": f"{bl:,.0f}"  if pd.notna(bl) else "—",
                     "Incremental":    f"{inc:+,.0f}" if pd.notna(inc) else "—",
                     "Uplift %":       f"{pct:+.1f}%" if pd.notna(pct) else "—",
-                    "per-m Ratio":    f"{rat:.3f}"   if pd.notna(rat) else "—",
+                    "Raw uplift Ratio": f"{rat:.3f}"   if pd.notna(rat) else "—",
                 })
             st.dataframe(pd.DataFrame(ir), use_container_width=True,
                           hide_index=True)
@@ -1367,47 +1330,6 @@ def main():
                 disp = [c for c in disp if c in comp_df.columns]
                 st.dataframe(comp_df[disp], use_container_width=True,
                               hide_index=True)
-
-    # ══════════ TAB: QC & Diagnostics ══════════
-    with tab_qc:
-        st.header("🩺 QC & Data Quality")
-
-        qc_rows = [
-            {"Check": "1-mile wells loaded",              "Value": len(df_1mile)},
-            {"Check": "2-mile wells loaded",              "Value": len(df_2mile)},
-            {"Check": "Wells with prod-data fit",         "Value": len(decline_results)},
-            {"Check": "2-mi wells with prod fit",         "Value": len(fitted_wells)},
-            {"Check": "RTC curves loaded",                "Value": len(rtc_curves)},
-            {"Check": "Analog-mode cohort links",
-             "Value": sum(len(v) for v in cohort_map.values())},
-            {"Check": "2-mi wells w/ ≥3 comps",
-             "Value": int(sum(1 for v in cohort_map.values()
-                              if len(v) >= MIN_COMPS_FOR_UPLIFT))},
-            {"Check": "Outliers removed (MAD)",           "Value": n_removed},
-            {"Check": "b (fixed)",                        "Value": B_FIXED},
-            {"Check": "Flat days",                        "Value": FLAT_DAYS},
-            {"Check": "Economic limit (bbl/d)",           "Value": Q_LIMIT},
-        ]
-        st.dataframe(pd.DataFrame(qc_rows), use_container_width=True,
-                      hide_index=True)
-
-        # cohort size histogram (sanity check mode-dependence)
-        sizes = [len(v) for v in cohort_map.values()]
-        if sizes:
-            fig_h = go.Figure(go.Histogram(x=sizes, nbinsx=max(5, max(sizes)+1),
-                                            marker_color="#3498db"))
-            fig_h.update_layout(**PLOTLY_LAYOUT, height=350,
-                                title=f"Cohort sizes — {analysis_mode}",
-                                xaxis_title="# of 1-mile comparators",
-                                yaxis_title="# of 2-mile wells")
-            st.plotly_chart(fig_h, use_container_width=True)
-
-        st.subheader("Missing-data summary (2-mile wells)")
-        miss = df_2mile[["eur_bbl", "ip30_bpd", "ip90_bpd",
-                         "cum6_bbl", "cum12_bbl", "hz_length_m",
-                         "section_ooip"]].isna().sum().to_frame("n_missing")
-        miss["pct_missing"] = (miss["n_missing"] / max(len(df_2mile), 1) * 100).round(1)
-        st.dataframe(miss, use_container_width=True)
 
     # ══════════ TAB: Export ══════════
     with tab_export:
@@ -1528,7 +1450,7 @@ def main():
                                                   sheet_name="Fitted_Parameters")
             if rtc_curves:
                 rtc_rows = [{
-                    "name":       r["name"],
+                    "name": r["name"],
                     "qi_bpd":     r["qi"],
                     "di_per_day": r["di"],
                     "b":          r["b"],
@@ -1541,7 +1463,7 @@ def main():
         st.download_button(
             "📥 Download Full Results (Excel)",
             buf.getvalue(),
-            file_name="2mile_type_curves_empirical_uplift.xlsx",
+            file_name="2mile_type_curves_raw_uplift.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
@@ -1550,7 +1472,7 @@ def main():
             st.download_button(
                 "📥 Download Curve Data (CSV)",
                 all_curves.to_csv(index=False).encode(),
-                file_name="2mile_type_curves.csv",
+                file_name="2mile_type_curves_raw.csv",
                 mime="text/csv",
             )
 
