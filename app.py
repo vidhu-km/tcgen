@@ -515,7 +515,7 @@ def compute_qi_from_peak_window(df_w: pd.DataFrame) -> dict:
     if df_w.empty:
         return dict(qi=np.nan, peak_date=pd.NaT, peak_rate=np.nan,
                     peak_idx=-1, used_months=[])
-    peak_idx  = int(df_w["rate"].idxmax())
+    peak_idx  = int(df_w["date"].idxmax())
     peak_rate = float(df_w.loc[peak_idx, "rate"])
     peak_date = df_w.loc[peak_idx, "date"]
 
@@ -763,13 +763,41 @@ def main():
         st.warning(f"⚠️ Production data issue: {prod_err}. Decline fitting skipped — qi will fall back to IP30 from the well table.")
 
     metric_keys = list(PERF_METRICS.keys())
+
+    # Build cohort mapping
     cohort_map  = build_cohort_map(df_2mile, df_1mile, geoms, analysis_mode, tolerances, active_features, corridor_width)
+
+    # NEW: Compute percentile-based uplift ratios (P10..P90) as pX(2mi)/pX(1mi) within current cohort
+    ratio_pctl = {}
+    # values for 1-Mile comparators within the cohort
+    cohort_1mi_values = {mk: [] for mk in metric_keys}
+    for uwi2, matched in cohort_map.items():
+        comp_df = df_1mile[df_1mile["uwi"].isin(matched)]
+        for mk in metric_keys:
+            if mk in comp_df.columns:
+                cohort_1mi_values[mk].extend(comp_df[mk].dropna().values.tolist())
+
+    for mk in metric_keys:
+        v2 = df_2mile[mk].dropna().values if mk in df_2mile.columns else np.array([])
+        v1 = np.array(cohort_1mi_values.get(mk, []), dtype=float)
+        if v2.size == 0 or v1.size == 0:
+            ratio_pctl[mk] = [np.nan] * 5
+        else:
+            p2 = np.percentile(v2, [10, 25, 50, 75, 90])
+            p1 = np.percentile(v1, [10, 25, 50, 75, 90])
+            ratios = []
+            for i in range(5):
+                d = p1[i]
+                ratios.append(p2[i] / d if (np.isfinite(p2[i]) and np.isfinite(d) and d != 0) else np.nan)
+            ratio_pctl[mk] = ratios
+
+    # Now build the incremental uplift frame (unchanged logic)
     incr_df     = build_incremental_frame(df_2mile, df_1mile, cohort_map, metric_keys)
 
     eur_info = derive_eur_targets(df_2mile, df_1mile, incr_df, cohort_map)
     equiv_eurs = np.array(eur_info.get("per_well_equivalent_eur", []), dtype=float)
 
-    # Removed MAD outlier filtering; use all data
+    # Original EUR distribution logic for Type Curves
     if len(equiv_eurs) >= MIN_COMPS_FOR_UPLIFT:
         eur_dist   = equiv_eurs
         eur_source = (f"empirical uplift from {len(equiv_eurs)} 2-mi wells "
@@ -961,27 +989,23 @@ def main():
         )
 
         ratio_summary_rows = []
+        # Build percentile-based uplift ratios using the new cohort-based pctl
         for mk in metric_keys:
-            col_r = f"{mk}_ratio"
-            if col_r not in incr_df.columns: continue
-            vals = incr_df[col_r].dropna().values
-            if len(vals) == 0: continue
-            # Percentile-based summary (no MAD filtering, no mean/std/quartiles)
-            if len(vals) >= 5:
-                p10, p25, p50, p75, p90 = np.percentile(vals, [10, 25, 50, 75, 90])
-            else:
-                # fallback with NaNs if not enough data
-                p10 = p25 = p50 = p75 = p90 = np.nan
+            pvals = ratio_pctl.get(mk, [np.nan]*5)
+            n2 = int(df_2mile[mk].notna().sum()) if mk in df_2mile.columns else 0
             ratio_summary_rows.append({
                 "Metric": PERF_METRICS[mk],
-                "n": len(vals),
-                "P10": p10, "P25": p25, "P50": p50, "P75": p75, "P90": p90,
+                "n": n2,
+                "P10": pvals[0], "P25": pvals[1], "P50": pvals[2],
+                "P75": pvals[3], "P90": pvals[4],
             })
+
         if ratio_summary_rows:
-            st.subheader(f"Uplift Ratios — 2mi / 1mi (b={B_FIXED} fixed)")
+            st.subheader("Uplift Ratios — 2mi / 1mi (percentile-based)")
             st.dataframe(pd.DataFrame(ratio_summary_rows),
                           use_container_width=True, hide_index=True)
-            st.caption("Ratios are raw, no per-metre normalization. Ratio=1.0 means no uplift.")
+            st.caption("Ratios shown are percentile-based: P10 = p10(2mi) / p10(1mi); etc.")
+        # End of percentile-based uplift ratios section
 
         for mk in metric_keys:
             col_name = f"{mk}_incremental"
@@ -1318,7 +1342,7 @@ def main():
         contrib_rows = []
         for _, row in df_2mile.iterrows():
             u = row["uwi"]
-            has_fit = u in decline_results
+            has_fit = u in twomile_uwis
             contrib_rows.append({
                 "uwi":                  u,
                 "eur_bbl":              row.get("eur_bbl", np.nan),
