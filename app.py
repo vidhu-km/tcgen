@@ -14,14 +14,14 @@ import streamlit as st
 
 warnings.filterwarnings("ignore")
 
-# ───────────────────────── Streamlit page ─────────────────────────
+# Page config
 st.set_page_config(
     page_title="2-Mile Type Curve Generator (Raw Uplift)",
     page_icon="🛢️",
     layout="wide",
 )
 
-# ───────────────────────── Constants ─────────────────────────
+# Constants
 XLSX_PATH        = "w.xlsx"
 SHP_1M_PATH      = "1M.shp"
 SHP_2M_PATH      = "2M.shp"
@@ -39,10 +39,9 @@ FLAT_DAYS          = int(round(FLAT_MONTHS * 30.4375))
 B_FIXED            = 0.95         # Arps exponent — LOCKED per spec
 DAYS_PER_MONTH_AVG = 30.4375
 
-# Quality guards
 MIN_COMPS_FOR_UPLIFT = 3
 MIN_MONTHS_FOR_FIT   = 6
-OUTLIER_Z_CUTOFF     = 3.5        # MAD-based outlier rejection on uplift ratios
+OUTLIER_Z_CUTOFF     = 3.5
 
 COLORS = {
     "1-Mile": "#1f77b4", "2-Mile": "#ff7f0e", "incremental": "#2ca02c",
@@ -70,7 +69,7 @@ RTC_PALETTE = [
     "#2980b9", "#7f8c8d", "#d35400", "#27ae60",
 ]
 
-# ───────────────────────── Helpers: std & math ─────────────────────────
+# Helpers
 def _std_uwi(s: pd.Series) -> pd.Series:
     return (
         s.astype(str).str.strip().str.upper()
@@ -93,7 +92,6 @@ def _safe_unary_union(gseries):
         return gseries.unary_union
 
 def mad_filter(values: np.ndarray, z_cut: float = OUTLIER_Z_CUTOFF) -> np.ndarray:
-    """Return mask of inliers using Median-Absolute-Deviation."""
     v = np.asarray(values, dtype=float)
     finite = np.isfinite(v)
     if finite.sum() < 4:
@@ -105,7 +103,7 @@ def mad_filter(values: np.ndarray, z_cut: float = OUTLIER_Z_CUTOFF) -> np.ndarra
     mz = 0.6745 * (v - med) / mad
     return finite & (np.abs(mz) <= z_cut)
 
-# ───────────────────────── Arps math ─────────────────────────
+# Arps math
 def hyp_rate(t, qi, di, b):
     t = np.asarray(t, dtype=float)
     if b == 0:
@@ -133,7 +131,6 @@ def t_to_rate(di, qi, b, q_target):
     return max(0.0, ((qi / q_target) ** b - 1.0) / (b * di))
 
 def find_Di_for_eur_post(qi, eur_post, b, q_target, tol=1e-6):
-    """Solve Di such that post-flat EUR (from qi→q_limit) equals target."""
     if eur_post <= 0 or qi <= q_target:
         return None
 
@@ -167,10 +164,6 @@ def find_Di_for_eur_post(qi, eur_post, b, q_target, tol=1e-6):
     return 0.5 * (lo + hi)
 
 def fit_hyperbolic_fixed_b(t_days, q_vals, qi_fixed=None, b_fixed=B_FIXED):
-    """
-    Fit Arps hyperbolic decline with b FIXED.
-    If qi_fixed is provided, only Di is fitted; else (qi, Di) are fitted.
-    """
     t = np.asarray(t_days, dtype=float)
     q = np.asarray(q_vals, dtype=float)
     m = (t > 0) & (q > 0) & np.isfinite(t) & np.isfinite(q)
@@ -236,7 +229,7 @@ def calc_eur_trap(t_arr, q_arr) -> float:
         return 0.0
     return float(np.trapezoid(q_arr, t_arr))
 
-# ───────────────────────── Data loaders ─────────────────────────
+# Data loaders
 REQUIRED_WELL_COLUMNS = [
     "UWI", "Section Name", "Well Type", "Hz Length (m)",
     "Oil + Cond: EUR (Mbbl)", "Oil + Cond: IP 30 Cal. Rate (bbl/d)",
@@ -376,7 +369,7 @@ def load_rtc_curves():
             continue
     return curves
 
-# ───────────────────── Spatial analytics ─────────────────────
+# Spatial analytics
 @st.cache_resource(show_spinner=False)
 def compute_spatial_features(_geoms_gdf, _well_meta):
     if _geoms_gdf.empty:
@@ -458,22 +451,13 @@ def range_match(target_row, df_1mile, tolerances, active_features):
         mask &= df_1mile["on_prod_date"].notna() & (df_1mile["on_prod_date"] < tp)
     return df_1mile.loc[mask, "uwi"].tolist()
 
-# ───────────────────── Uplift engine ─────────────────────
+# Uplift engine
 def compute_incremental(well_row, comparator_df, metric_keys):
-    """
-    Compare a 2-mile well to its 1-mile cohort.
-    Raw comparison (no normalization) of uplift:
-      - Baseline: median of 1-mile comparator metric
-      - Incremental: 2-mile actual - baseline
-      - Uplift %: incremental / baseline * 100
-      - Ratio: 2-mile actual / baseline
-    """
     result = {"uwi": well_row["uwi"]}
     Lh_2 = well_row.get("hz_length_m", np.nan)
 
     for mk in metric_keys:
         val = well_row.get(mk, np.nan)
-
         if comparator_df.empty or pd.isna(val):
             result[f"{mk}_baseline"]    = np.nan
             result[f"{mk}_incremental"] = np.nan
@@ -481,9 +465,7 @@ def compute_incremental(well_row, comparator_df, metric_keys):
             result[f"{mk}_ratio"]       = np.nan
             continue
 
-        # RAW: no per-length normalization
         bl_total = float(comparator_df[mk].median())
-
         incr = float(val) - bl_total
         pct  = (incr / bl_total * 100) if bl_total else np.nan
         ratio = float(val) / bl_total if bl_total else np.nan
@@ -526,15 +508,8 @@ def bootstrap_ci(values, statistic=np.median, n_boot=2000, ci=0.80, seed=42):
     hi = np.percentile(boots, (1 + ci) / 2 * 100)
     return float(lo), float(hi)
 
-# ───────────────────── Production fitting (qi from peak recipe) ─────────────
+# Production fitting (qi from peak recipe) with optional user override
 def compute_qi_from_peak_window(df_w: pd.DataFrame) -> dict:
-    """
-    qi = 0.5 * peak-month daily rate
-       + 0.25 * month-before-peak daily rate
-       + 0.25 * month-after-peak daily rate.
-    Falls back gracefully if peak is first/last record.
-    Returns {qi, peak_date, peak_rate, peak_idx, used_months}.
-    """
     df_w = df_w.sort_values("date").reset_index(drop=True)
     if df_w.empty:
         return dict(qi=np.nan, peak_date=pd.NaT, peak_rate=np.nan,
@@ -561,22 +536,25 @@ def compute_qi_from_peak_window(df_w: pd.DataFrame) -> dict:
     return dict(qi=qi, peak_date=peak_date, peak_rate=peak_rate,
                 peak_idx=peak_idx, used_months=used)
 
-def analyse_well_production(df_w: pd.DataFrame, b_fixed: float = B_FIXED) -> dict:
+def analyse_well_production(df_w: pd.DataFrame, b_fixed: float = B_FIXED, qi_override: Optional[float] = None) -> dict:
     df_w = df_w.sort_values("date").reset_index(drop=True)
     peak_info = compute_qi_from_peak_window(df_w)
-    qi        = peak_info["qi"]
+    qi = peak_info["qi"]
     peak_date = peak_info["peak_date"]
     peak_idx  = peak_info["peak_idx"]
 
     df_w["t_days"] = (df_w["date"] - peak_date).dt.days.astype(float)
     df_decline = df_w[df_w["t_days"] > 0].copy()
 
-    # Fit Di with qi anchored to the weighted-window recipe, b FIXED = 0.95.
-    hyp = fit_hyperbolic_fixed_b(
-        df_decline["t_days"].values, df_decline["rate"].values,
-        qi_fixed=qi if np.isfinite(qi) else None, b_fixed=b_fixed,
-    ) if len(df_decline) >= 3 and np.isfinite(qi) else None
+    # Anchor qi from override if provided
+    qi_anchor = qi_override if (qi_override is not None and np.isfinite(qi_override)) else qi
 
+    hyp = None
+    if len(df_decline) >= 3 and qi_anchor is not None and np.isfinite(qi_anchor):
+        hyp = fit_hyperbolic_fixed_b(
+            df_decline["t_days"].values, df_decline["rate"].values,
+            qi_fixed=qi_anchor, b_fixed=b_fixed,
+        )
     if hyp:
         qi_h, di_h, b_h = hyp
         pred = hyp_rate(df_decline["t_days"].values, qi_h, di_h, b_h)
@@ -584,8 +562,13 @@ def analyse_well_production(df_w: pd.DataFrame, b_fixed: float = B_FIXED) -> dic
         ss_tot = np.sum((df_decline["rate"].values - df_decline["rate"].mean()) ** 2)
         r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
     else:
-        qi_h, di_h, b_h, r2 = qi if np.isfinite(qi) else peak_info["peak_rate"], \
-                              0.003, b_fixed, 0.0
+        if qi_anchor is not None and np.isfinite(qi_anchor):
+            qi_h = qi_anchor
+        else:
+            qi_h = qi if np.isfinite(qi) else peak_info["peak_rate"]
+        di_h = 0.003
+        b_h = b_fixed
+        r2 = 0.0
 
     eur_trap = calc_eur_trap(
         (df_w["date"] - df_w["date"].min()).dt.days.values.astype(float),
@@ -601,7 +584,7 @@ def analyse_well_production(df_w: pd.DataFrame, b_fixed: float = B_FIXED) -> dic
         df_post=df_w[df_w["t_days"] >= 0].copy(),
     )
 
-# ───────────────────── Assembly ─────────────────────
+# Assembly
 @st.cache_data(show_spinner="Loading well table & geometries…")
 def load_and_assemble_wells():
     well_raw = load_well_table()
@@ -626,7 +609,7 @@ def load_and_assemble_wells():
     return well_df, geoms
 
 @st.cache_data(show_spinner="Fitting decline parameters on production data…")
-def fit_all_declines(b_fixed):
+def fit_all_declines(b_fixed, qi_override=None):
     prod_df, err = load_production_data()
     if prod_df is None:
         return {}, err
@@ -634,13 +617,12 @@ def fit_all_declines(b_fixed):
     for uwi, grp in prod_df.groupby("uwi"):
         if len(grp) < MIN_MONTHS_FOR_FIT:
             continue
-        results[uwi] = analyse_well_production(grp, b_fixed)
+        results[uwi] = analyse_well_production(grp, b_fixed, qi_override)
     return results, None
 
-# ───────────────────── Cohort + uplift builder (mode-aware) ─────────────
+# Cohort + uplift builder
 def build_cohort_map(df_2mile, df_1mile, geoms, analysis_mode,
                      tolerances, active_features, corridor_width):
-    """Returns {uwi_2mi: [uwi_1mi_comps,...]}, **mode-aware**."""
     mapping = {}
     is_mode_a = analysis_mode.startswith("Mode A")
     for _, row2 in df_2mile.iterrows():
@@ -670,21 +652,11 @@ def build_incremental_frame(df_2mile, df_1mile, cohort_map, metric_keys):
         records.append(rec)
     return pd.DataFrame(records) if records else pd.DataFrame(columns=["uwi"])
 
-# ───────────────────── EUR target builder (mode-dependent!) ─────────────
+# EUR target builder (mode-dependent)
 def derive_eur_targets(df_2mile: pd.DataFrame,
                        df_1mile: pd.DataFrame,
                        incr_df: pd.DataFrame,
                        cohort_map: dict) -> dict:
-    """
-    EUR target for the type curve is **derived from the empirical uplift
-    applied to the 1-mile baseline** — which means it DOES change with
-    the analog-matching mode (fixing the earlier disconnect).
-
-    EUR_target_2mi  =  UpliftRatio_per_m  ×  EUR_perm_1mi_cohort  ×  Lh_2mi_target
-
-    We compute that for each 2-mile well and then take P25/P50/P75 of
-    the resulting distribution. We also surface a MAD-filtered version.
-    """
     results = {"method": "mode-dependent empirical uplift",
                "per_well_equivalent_eur": [],
                "ratios": [],
@@ -694,7 +666,6 @@ def derive_eur_targets(df_2mile: pd.DataFrame,
     if incr_df.empty or "eur_bbl_ratio" not in incr_df.columns:
         return results
 
-    # Median per-metre baseline across the ALL pooled 1-mile comps
     all_comp_uwis = {u for lst in cohort_map.values() for u in lst}
     pooled = df_1mile[df_1mile["uwi"].isin(all_comp_uwis)].copy()
     if not pooled.empty and "hz_length_m" in pooled.columns:
@@ -703,7 +674,6 @@ def derive_eur_targets(df_2mile: pd.DataFrame,
         if not perm.empty:
             results["pooled_baseline_perm"] = float(perm.median())
 
-    # Typical 2-mile lateral length → used to scale the per-metre curve
     Lh_targets = df_2mile["hz_length_m"].dropna()
     Lh_typ = float(Lh_targets.median()) if not Lh_targets.empty else MILE_TO_M * 2
 
@@ -716,7 +686,6 @@ def derive_eur_targets(df_2mile: pd.DataFrame,
         if np.isfinite(ratio) and np.isfinite(bperm) and ratio > 0 and bperm > 0:
             ratios.append(ratio)
             perms.append(bperm)
-            # equivalent full-2mi EUR if we placed a 'typical' 2-mi lateral
             equiv_eurs.append(ratio * bperm * Lh_typ)
 
     results["ratios"]        = ratios
@@ -725,7 +694,7 @@ def derive_eur_targets(df_2mile: pd.DataFrame,
     results["Lh_typical_m"]  = Lh_typ
     return results
 
-# ───────────────────────── Main UI ─────────────────────────
+# UI
 def main():
     st.title("🛢️ 2-Mile Type Curve Generator — Raw Uplift Edition")
     st.caption(
@@ -739,14 +708,18 @@ def main():
     df_2mile = well_df[well_df["lateral_group"] == "2-Mile"].reset_index(drop=True)
     rtc_curves = load_rtc_curves()
 
-    # ───── Sidebar config ─────
+    # Sidebar: qi override
     st.sidebar.title("⚙️ Configuration")
+    qi_override = st.sidebar.number_input("Override qi (bbl/d) for type curves (0 = auto)", min_value=0.0, value=0.0, step=1.0)
+
+    # UI: analysis mode
     analysis_mode = st.sidebar.radio(
         "Analog Matching Mode",
         ["Mode A: Range-Based Analog Matching", "Mode B: Geometric Corridor"],
         key="analysis_mode_radio",
     )
 
+    # tolerances / features
     st.sidebar.divider()
     active_features, tolerances = [], {}
     corridor_width = CORRIDOR_HALF_WIDTH_M
@@ -757,17 +730,13 @@ def main():
         if well_df["section_ooip"].notna().any():         available.append("section_ooip")
         if well_df["nearest_producer_m"].notna().any():   available.append("nearest_producer_m")
         if well_df["nearest_injector_m"].notna().any():   available.append("nearest_injector_m")
-        active_features = st.sidebar.multiselect("Active features",
-                                                  available, default=available)
+        active_features = st.sidebar.multiselect("Active features", available, default=available)
         if "section_ooip" in active_features:
-            tolerances["section_ooip"] = st.sidebar.number_input(
-                "± OOIP tol", 0.0, 1e6, 250000.0, 1e5)
+            tolerances["section_ooip"] = st.sidebar.number_input("± OOIP tol", 0.0, 1e6, 250000.0, 1e5)
         if "nearest_producer_m" in active_features:
-            tolerances["nearest_producer_m"] = st.sidebar.number_input(
-                "± Nearest producer tol (m)", 0.0, 5000.0, 150.0, 50.0)
+            tolerances["nearest_producer_m"] = st.sidebar.number_input("± Nearest producer tol (m)", 0.0, 5000.0, 150.0, 50.0)
         if "nearest_injector_m" in active_features:
-            tolerances["nearest_injector_m"] = st.sidebar.number_input(
-                "± Nearest injector tol (m)", 0.0, 5000.0, 150.0, 50.0)
+            tolerances["nearest_injector_m"] = st.sidebar.number_input("± Nearest injector tol (m)", 0.0, 5000.0, 150.0, 50.0)
     else:
         st.sidebar.subheader("Corridor Parameters")
         corridor_width = st.sidebar.number_input(
@@ -782,28 +751,19 @@ def main():
         f"**q-limit** = `{Q_LIMIT} bbl/d`",
         unsafe_allow_html=True,
     )
-    apply_mad = st.sidebar.checkbox(
-        "MAD-filter uplift outliers (|z|≤3.5)", value=True)
-    show_curves = st.sidebar.multiselect(
-        "Display percentiles", ["P10", "P25", "P50", "P75", "P90"],
-        default=["P25", "P50", "P75"])
+    apply_mad = st.sidebar.checkbox("MAD-filter uplift outliers (|z|≤3.5)", value=True)
+    show_curves = st.sidebar.multiselect("Display percentiles", ["P10", "P25", "P50", "P75", "P90"], default=["P25", "P50", "P75"])
     overlay_rtc = st.sidebar.checkbox("Overlay corporate RTC curves", value=True)
 
-    # ───── Decline fits (prod data) ─────
-    decline_results, prod_err = fit_all_declines(B_FIXED)
+    # Decline fits (prod data)
+    decline_results, prod_err = fit_all_declines(B_FIXED, qi_override if (qi_override and qi_override > 0) else None)
     if prod_err:
-        st.warning(f"⚠️ Production data issue: {prod_err}. Decline fitting skipped — "
-                    "qi will fall back to IP30 from the well table.")
+        st.warning(f"⚠️ Production data issue: {prod_err}. Decline fitting skipped — qi will fall back to IP30 from the well table.")
 
-    # ───── Build cohort mapping + uplift (MODE-DEPENDENT) ─────
     metric_keys = list(PERF_METRICS.keys())
-    cohort_map  = build_cohort_map(df_2mile, df_1mile, geoms,
-                                    analysis_mode, tolerances,
-                                    active_features, corridor_width)
-    incr_df     = build_incremental_frame(df_2mile, df_1mile,
-                                           cohort_map, metric_keys)
+    cohort_map  = build_cohort_map(df_2mile, df_1mile, geoms, analysis_mode, tolerances, active_features, corridor_width)
+    incr_df     = build_incremental_frame(df_2mile, df_1mile, cohort_map, metric_keys)
 
-    # ───── Derive EUR targets from EMPIRICAL uplift (mode-dependent!) ─────
     eur_info = derive_eur_targets(df_2mile, df_1mile, incr_df, cohort_map)
     equiv_eurs = np.array(eur_info.get("per_well_equivalent_eur", []), dtype=float)
 
@@ -827,26 +787,33 @@ def main():
 
     eur_summary = empirical_summary(eur_dist)
 
-    # ───── qi anchor (from prod fits of 2-mi; else IP30) ─────
+    # qi anchor (allow override)
     twomile_uwis  = set(df_2mile["uwi"].dropna())
     fitted_qi_vals, fitted_di_vals, fitted_wells = [], [], []
-    for uwi, res in decline_results.items():
-        if uwi in twomile_uwis:
-            if np.isfinite(res["qi"]) and res["qi"] > 0:
-                fitted_qi_vals.append(res["qi"])
-                fitted_di_vals.append(res["di"])
-                fitted_wells.append(uwi)
+    qi_anchor = None
+    qi_source = ""
 
-    if fitted_qi_vals:
-        qi_anchor = float(np.median(fitted_qi_vals))
-        qi_source = (f"median of {len(fitted_qi_vals)} 2-mi wells — "
-                      f"qi recipe: 0.5·peak + 0.25·prev + 0.25·next")
+    if qi_override and qi_override > 0:
+        qi_anchor = float(qi_override)
+        qi_source = f"user-specified qi = {qi_anchor:,.0f}"
     else:
-        ip30_vals = df_2mile["ip30_bpd"].dropna().values
-        qi_anchor = float(np.median(ip30_vals)) if len(ip30_vals) > 0 else 150.0
-        qi_source = "fallback — median IP30 from well table"
+        for uwi, res in decline_results.items():
+            if uwi in twomile_uwis:
+                if np.isfinite(res["qi"]) and res["qi"] > 0:
+                    fitted_qi_vals.append(res["qi"])
+                    fitted_di_vals.append(res["di"])
+                    fitted_wells.append(uwi)
 
-    # ───── Solve final type curves ─────
+        if fitted_qi_vals:
+            qi_anchor = float(np.median(fitted_qi_vals))
+            qi_source = (f"median of {len(fitted_qi_vals)} 2-mi wells — "
+                          f"qi recipe: 0.5·peak + 0.25·prev + 0.25·next")
+        else:
+            ip30_vals = df_2mile["ip30_bpd"].dropna().values
+            qi_anchor = float(np.median(ip30_vals)) if len(ip30_vals) > 0 else 150.0
+            qi_source = "fallback — median IP30 from well table"
+
+    # Final curves
     pct_targets = {
         "P10": eur_summary["q10"], "P25": eur_summary["q25"],
         "P50": eur_summary["q50"], "P75": eur_summary["q75"],
@@ -860,14 +827,13 @@ def main():
         else:
             final_curves[label] = None
 
-    # ───── Tabs ─────
     tab_curves, tab_uplift, tab_rtc, tab_params, tab_well, tab_export = st.tabs([
         "📈 Type Curves", "📊 Uplift Analysis", "🆚 vs RTC",
         "🔧 Fitted Parameters", "🔍 Well-by-Well",
         "📥 Export",
     ])
 
-    # ══════════ TAB: Type Curves ══════════
+    # Type Curves
     with tab_curves:
         st.header("Type Curves — derived from raw uplift")
 
@@ -879,17 +845,7 @@ def main():
         c0[4].metric("b (fixed)", f"{B_FIXED:.2f}")
         c0[5].metric("Prod fits", len(fitted_wells))
 
-        with st.expander("📝 How were qi and EUR derived?", expanded=False):
-            st.markdown(f"""
-- **qi** (anchor for all percentile curves):  
-  {qi_source}
-- **EUR distribution**:  
-  {eur_source}  
-  _Note_: Uplift is computed using raw baselines (1-Mile median per metric) and raw 2-Mile actuals.
-- **Di** is back-solved for each percentile curve so that  
-  $EUR_{{target}} = q_i\\cdot t_{{flat}} + \\int_0^{{t_{{lim}}}}\\!\\!q(t)\\,dt$
-- **b is locked at `{B_FIXED}` per spec** — no user override.
-""")
+        # Optional explanatory note removed to keep UI concise
 
         st.subheader("Curve Parameters")
         param_rows = []
@@ -910,8 +866,7 @@ def main():
                     "EUR tgt (Mbbl)":     f"{c['eur_target_bbl'] / 1000:,.1f}",
                     "EUR solved (Mbbl)":  f"{c['eur_actual_bbl'] / 1000:,.1f}",
                 })
-        st.dataframe(pd.DataFrame(param_rows), use_container_width=True,
-                      hide_index=True)
+        st.dataframe(pd.DataFrame(param_rows), use_container_width=True, hide_index=True)
 
         # Rate plot
         st.subheader("Rate Type Curves — q(t)")
@@ -1011,7 +966,7 @@ def main():
         else:
             st.warning("No EUR distribution data available.")
 
-    # ══════════ TAB: Uplift Analysis ══════════
+    # Uplift analysis
     with tab_uplift:
         st.header("📊 Empirical Uplift (2-Mile vs 1-Mile)")
         mode_label = ("Range-Based" if analysis_mode.startswith("Mode A")
@@ -1022,7 +977,6 @@ def main():
             f"{sum(len(v) for v in cohort_map.values())} cohort links"
         )
 
-        # Ratio summary for all metrics
         ratio_summary_rows = []
         for mk in metric_keys:
             col_r = f"{mk}_ratio"
@@ -1091,10 +1045,9 @@ def main():
                      "ip30_bpd_pct_uplift", "ip30_bpd_ratio",
                      "waterflood_flag", "vintage_year"]
         disp_cols = [c for c in disp_cols if c in incr_df.columns]
-        st.dataframe(incr_df[disp_cols], use_container_width=True,
-                      hide_index=True)
+        st.dataframe(incr_df[disp_cols], use_container_width=True, hide_index=True)
 
-    # ══════════ TAB: vs RTC ══════════
+    # vs RTC
     with tab_rtc:
         st.header("🆚 Benchmarking vs Corporate RTC Curves (`rtc.xlsx`)")
         if not rtc_curves:
@@ -1124,10 +1077,8 @@ def main():
                     row[f"Δ{label} EUR (Mbbl)"] = f"{d_abs:+,.1f}"
                     row[f"Δ{label} %"]          = f"{d_pct:+.1f}%"
                 rows.append(row)
-            st.dataframe(pd.DataFrame(rows), use_container_width=True,
-                          hide_index=True)
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-            # Side-by-side figure
             st.subheader("Rate Overlay — RTC vs Derived")
             fig_bench = go.Figure()
             for label in ["P25", "P50", "P75"]:
@@ -1172,7 +1123,7 @@ def main():
                                      title="EUR Comparison")
             st.plotly_chart(fig_eurbar, use_container_width=True)
 
-    # ══════════ TAB: Fitted Parameters ══════════
+    # Fitted Parameters
     with tab_params:
         st.header("🔧 Decline Parameter Fits (b fixed = 0.95)")
 
@@ -1232,7 +1183,7 @@ def main():
                                      title="Fitted qi vs Di (2-Mile Wells)")
                 st.plotly_chart(fig_qd, use_container_width=True)
 
-    # ══════════ TAB: Well-by-Well ══════════
+    # Well-by-Well
     with tab_well:
         st.header("🔍 Well-by-Well Diagnostic")
         if df_2mile.empty:
@@ -1277,8 +1228,7 @@ def main():
                     "Uplift %":       f"{pct:+.1f}%" if pd.notna(pct) else "—",
                     "Raw uplift Ratio": f"{rat:.3f}"   if pd.notna(rat) else "—",
                 })
-            st.dataframe(pd.DataFrame(ir), use_container_width=True,
-                          hide_index=True)
+            st.dataframe(pd.DataFrame(ir), use_container_width=True, hide_index=True)
 
         if sel_uwi in decline_results:
             res = decline_results[sel_uwi]
@@ -1328,10 +1278,9 @@ def main():
                 disp = ["uwi", "section_name", "hz_length_m",
                         "eur_bbl", "ip30_bpd", "on_prod_date"]
                 disp = [c for c in disp if c in comp_df.columns]
-                st.dataframe(comp_df[disp], use_container_width=True,
-                              hide_index=True)
+                st.dataframe(comp_df[disp], use_container_width=True, hide_index=True)
 
-    # ══════════ TAB: Export ══════════
+    # Export
     with tab_export:
         st.header("📥 Export Results")
 
@@ -1475,7 +1424,6 @@ def main():
                 file_name="2mile_type_curves_raw.csv",
                 mime="text/csv",
             )
-
 
 if __name__ == "__main__":
     main()
