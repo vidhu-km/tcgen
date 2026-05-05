@@ -91,17 +91,18 @@ def _safe_unary_union(gseries):
     except AttributeError:
         return gseries.unary_union
 
-def mad_filter(values: np.ndarray, z_cut: float = OUTLIER_Z_CUTOFF) -> np.ndarray:
-    v = np.asarray(values, dtype=float)
-    finite = np.isfinite(v)
-    if finite.sum() < 4:
-        return finite
-    med = np.median(v[finite])
-    mad = np.median(np.abs(v[finite] - med))
-    if mad == 0:
-        return finite
-    mz = 0.6745 * (v - med) / mad
-    return finite & (np.abs(mz) <= z_cut)
+# Removed MAD-filter uplift outliers feature
+# def mad_filter(values: np.ndarray, z_cut: float = OUTLIER_Z_CUTOFF) -> np.ndarray:
+#     v = np.asarray(values, dtype=float)
+#     finite = np.isfinite(v)
+#     if finite.sum() < 4:
+#         return finite
+#     med = np.median(v[finite])
+#     mad = np.median(np.abs(v[finite] - med))
+#     if mad == 0:
+#         return finite
+#     mz = 0.6745 * (v - med) / mad
+#     return finite & (np.abs(mz) <= z_cut)
 
 # Arps math
 def hyp_rate(t, qi, di, b):
@@ -577,7 +578,7 @@ def analyse_well_production(df_w: pd.DataFrame, b_fixed: float = B_FIXED, qi_ove
 
     return dict(
         uwi=df_w["uwi"].iloc[0],
-        peak_rate=peak_info["peak_rate"], peak_date=peak_date,
+        peak_rate=peak_info["peak_rate"], peak_date= peak_date,
         qi=qi_h, di=di_h, b=b_h, r2=r2,
         qi_recipe=qi, qi_used_months=peak_info["used_months"],
         eur_trap_bbl=eur_trap, n_months=len(df_w),
@@ -730,6 +731,7 @@ def main():
         if well_df["section_ooip"].notna().any():         available.append("section_ooip")
         if well_df["nearest_producer_m"].notna().any():   available.append("nearest_producer_m")
         if well_df["nearest_injector_m"].notna().any():   available.append("nearest_injector_m")
+        # Remove MAD-outliers toggle; keep only active features by default
         active_features = st.sidebar.multiselect("Active features", available, default=available)
         if "section_ooip" in active_features:
             tolerances["section_ooip"] = st.sidebar.number_input("± OOIP tol", 0.0, 1e6, 250000.0, 1e5)
@@ -751,8 +753,8 @@ def main():
         f"**q-limit** = `{Q_LIMIT} bbl/d`",
         unsafe_allow_html=True,
     )
-    apply_mad = st.sidebar.checkbox("MAD-filter uplift outliers (|z|≤3.5)", value=True)
-    show_curves = st.sidebar.multiselect("Display percentiles", ["P10", "P25", "P50", "P75", "P90"], default=["P25", "P50", "P75"])
+    # MAD-outliers feature removed
+    show_curves = st.sidebar.multiselect("Display percentiles", ["P10", "P25", "P50", "P75", "P90"], default=["P10","P25","P50","P75","P90"])
     overlay_rtc = st.sidebar.checkbox("Overlay corporate RTC curves", value=True)
 
     # Decline fits (prod data)
@@ -767,17 +769,10 @@ def main():
     eur_info = derive_eur_targets(df_2mile, df_1mile, incr_df, cohort_map)
     equiv_eurs = np.array(eur_info.get("per_well_equivalent_eur", []), dtype=float)
 
-    if apply_mad and len(equiv_eurs) >= 4:
-        mask = mad_filter(equiv_eurs)
-        equiv_eurs_used = equiv_eurs[mask]
-        n_removed = int((~mask).sum())
-    else:
-        equiv_eurs_used = equiv_eurs
-        n_removed = 0
-
-    if len(equiv_eurs_used) >= MIN_COMPS_FOR_UPLIFT:
-        eur_dist   = equiv_eurs_used
-        eur_source = (f"empirical uplift from {len(equiv_eurs_used)} 2-mi wells "
+    # Removed MAD outlier filtering; use all data
+    if len(equiv_eurs) >= MIN_COMPS_FOR_UPLIFT:
+        eur_dist   = equiv_eurs
+        eur_source = (f"empirical uplift from {len(equiv_eurs)} 2-mi wells "
                        f"× 1-mi comparators ({analysis_mode.split(':')[0]})")
     elif not df_2mile["eur_bbl"].dropna().empty:
         eur_dist   = df_2mile["eur_bbl"].dropna().values
@@ -872,19 +867,7 @@ def main():
         st.subheader("Rate Type Curves — q(t)")
         fig_rate = go.Figure()
         n_bg = 0
-        for uwi in fitted_wells:
-            res = decline_results[uwi]
-            dfp = res.get("df_post")
-            if dfp is not None and not dfp.empty:
-                fig_rate.add_trace(go.Scatter(
-                    x=dfp["t_days"], y=dfp["rate"], mode="lines",
-                    line=dict(color="grey", width=0.6), opacity=0.25,
-                    showlegend=(n_bg == 0),
-                    name="2-Mile wells (observed)" if n_bg == 0 else None,
-                    hoverinfo="skip",
-                ))
-                n_bg += 1
-        for label in ["P10", "P25", "P50", "P75", "P90"]:
+        for label in ["P10","P25","P50","P75","P90"]:
             if label not in show_curves: continue
             c = final_curves.get(label)
             if c is None: continue
@@ -914,14 +897,14 @@ def main():
 
         st.subheader("Cumulative Type Curves — N(t)")
         fig_cum = go.Figure()
-        for label in ["P10", "P25", "P50", "P75", "P90"]:
+        for label in ["P10","P25","P50","P75","P90"]:
             if label not in show_curves: continue
             c = final_curves.get(label)
             if c is None: continue
             fig_cum.add_trace(go.Scatter(
                 x=c["t"], y=c["N"] / 1000, mode="lines",
                 line=dict(color=COLORS[label], width=3),
-                name=f"{label} — EUR={c['eur_actual_bbl']/1000:,.0f} Mbbl",
+                name=f"{label} — EUR={c['eur_target_bbl']/1000:,.0f} Mbbl",
                 hovertemplate=f"{label}<br>Day %{{x:,.0f}}<br>%{{y:,.1f}} Mbbl",
             ))
         if overlay_rtc and rtc_curves:
@@ -982,17 +965,17 @@ def main():
             col_r = f"{mk}_ratio"
             if col_r not in incr_df.columns: continue
             vals = incr_df[col_r].dropna().values
-            if apply_mad: vals = vals[mad_filter(vals)]
-            s = empirical_summary(vals)
-            lo, hi = bootstrap_ci(vals, np.median)
+            if len(vals) == 0: continue
+            # Percentile-based summary (no MAD filtering, no mean/std/quartiles)
+            if len(vals) >= 5:
+                p10, p25, p50, p75, p90 = np.percentile(vals, [10, 25, 50, 75, 90])
+            else:
+                # fallback with NaNs if not enough data
+                p10 = p25 = p50 = p75 = p90 = np.nan
             ratio_summary_rows.append({
-                "Metric":       PERF_METRICS[mk],
-                "n":            s["n"],
-                "Median ratio": round(s["median"], 3) if np.isfinite(s["median"]) else "—",
-                "Mean ratio":   round(s["mean"], 3)   if np.isfinite(s["mean"])   else "—",
-                "P25":          round(s["q25"], 3)    if np.isfinite(s["q25"])    else "—",
-                "P75":          round(s["q75"], 3)    if np.isfinite(s["q75"])    else "—",
-                "80% CI (med)": f"{lo:.2f} — {hi:.2f}" if np.isfinite(lo) else "—",
+                "Metric": PERF_METRICS[mk],
+                "n": len(vals),
+                "P10": p10, "P25": p25, "P50": p50, "P75": p75, "P90": p90,
             })
         if ratio_summary_rows:
             st.subheader(f"Uplift Ratios — 2mi / 1mi (b={B_FIXED} fixed)")
@@ -1005,18 +988,22 @@ def main():
             if col_name not in incr_df.columns: continue
             vals = incr_df[col_name].dropna().values
             if len(vals) == 0: continue
-            s = empirical_summary(vals)
+            # Percentile-based incremental distribution (P10..P90)
+            if len(vals) >= 5:
+                p10, p25, p50, p75, p90 = np.percentile(vals, [10, 25, 50, 75, 90])
+            else:
+                p10 = p25 = p50 = p75 = p90 = np.nan
+
             with st.expander(
-                f"**{PERF_METRICS[mk]}** — incremental distribution (n={s['n']})",
+                f"**{PERF_METRICS[mk]}** — incremental distribution (n={len(vals)})",
                 expanded=(mk == "eur_bbl"),
             ):
                 mc = st.columns(5)
-                mc[0].metric("Median",  f"{s['median']:+,.0f}")
-                mc[1].metric("Mean",    f"{s['mean']:+,.0f}")
-                mc[2].metric("Q25",     f"{s['q25']:+,.0f}")
-                mc[3].metric("Q75",     f"{s['q75']:+,.0f}")
-                mc[4].metric("Std",     f"{s['std']:,.0f}"
-                              if np.isfinite(s["std"]) else "—")
+                mc[0].metric("P10", f"{p10:+,.0f}" if np.isfinite(p10) else "—")
+                mc[1].metric("P25", f"{p25:+,.0f}" if np.isfinite(p25) else "—")
+                mc[2].metric("P50", f"{p50:+,.0f}" if np.isfinite(p50) else "—")
+                mc[3].metric("P75", f"{p75:+,.0f}" if np.isfinite(p75) else "—")
+                mc[4].metric("P90", f"{p90:+,.0f}" if np.isfinite(p90) else "—")
 
                 sub = incr_df.dropna(subset=[col_name])\
                              .sort_values(col_name, ascending=False)
@@ -1064,7 +1051,7 @@ def main():
                     "RTC b":           round(rtc["b"], 2),
                     "RTC EUR (Mbbl)":  round(rtc["eur_actual_bbl"] / 1000, 1),
                 }
-                for label in ["P25", "P50", "P75"]:
+                for label in ["P10", "P25", "P50", "P75", "P90"]:
                     c = final_curves.get(label)
                     if c is None:
                         row[f"Δ{label} EUR (Mbbl)"] = "—"
@@ -1081,7 +1068,7 @@ def main():
 
             st.subheader("Rate Overlay — RTC vs Derived")
             fig_bench = go.Figure()
-            for label in ["P25", "P50", "P75"]:
+            for label in ["P10","P25","P50","P75","P90"]:
                 c = final_curves.get(label)
                 if c is None: continue
                 fig_bench.add_trace(go.Scatter(
@@ -1109,7 +1096,7 @@ def main():
                 cats.append(f"RTC: {rtc['name']}")
                 vals.append(rtc["eur_actual_bbl"] / 1000)
                 cols.append("#7f8c8d")
-            for label in ["P25", "P50", "P75"]:
+            for label in ["P10","P25","P50","P75","P90"]:
                 c = final_curves.get(label)
                 if c is None: continue
                 cats.append(f"Derived {label}")
@@ -1274,7 +1261,7 @@ def main():
         comp_uwis = cohort_map.get(sel_uwi, [])
         if comp_uwis:
             with st.expander("📋 Comparator 1-mile wells", expanded=False):
-                comp_df = df_1mile[df_1mile["uwi"].isin(comp_uwis)]
+                comp_df = data = df_1mile[df_1mile["uwi"].isin(comp_uwis)]
                 disp = ["uwi", "section_name", "hz_length_m",
                         "eur_bbl", "ip30_bpd", "on_prod_date"]
                 disp = [c for c in disp if c in comp_df.columns]
