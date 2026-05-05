@@ -16,7 +16,7 @@ warnings.filterwarnings("ignore")
 
 # Page config
 st.set_page_config(
-    page_title="2-Mile Type Curve Generator (Raw Uplift)",
+    page_title="2-Mile Well Analysis",
     page_icon="🛢️",
     layout="wide",
 )
@@ -696,7 +696,7 @@ def derive_eur_targets(df_2mile: pd.DataFrame,
 
 # UI
 def main():
-    st.title("🛢️ 2-Mile Type Curve Generator — Raw Uplift Edition")
+    st.title("🛢️ 2-Mile Type Curve Generator")
     st.caption(
         "Raw comparison: 2-mile wells are compared against 1-mile wells using "
         "unscaled, direct raw metrics. EUR, IP30/IP90, 6-month cum and 12-month cum "
@@ -835,7 +835,7 @@ def main():
 
     # Type Curves
     with tab_curves:
-        st.header("Type Curves — derived from raw uplift")
+        st.header("Type Curves")
 
         c0 = st.columns(6)
         c0[0].metric("Mode", "A (Range)" if analysis_mode.startswith("Mode A") else "B (Corridor)")
@@ -995,7 +995,7 @@ def main():
                 "80% CI (med)": f"{lo:.2f} — {hi:.2f}" if np.isfinite(lo) else "—",
             })
         if ratio_summary_rows:
-            st.subheader(f"Raw Uplift Ratios — 2mi / 1mi (b={B_FIXED} fixed)")
+            st.subheader(f"Uplift Ratios — 2mi / 1mi (b={B_FIXED} fixed)")
             st.dataframe(pd.DataFrame(ratio_summary_rows),
                           use_container_width=True, hide_index=True)
             st.caption("Ratios are raw, no per-metre normalization. Ratio=1.0 means no uplift.")
@@ -1226,7 +1226,7 @@ def main():
                     "1-Mile Baseline (Raw)": f"{bl:,.0f}"  if pd.notna(bl) else "—",
                     "Incremental":    f"{inc:+,.0f}" if pd.notna(inc) else "—",
                     "Uplift %":       f"{pct:+.1f}%" if pd.notna(pct) else "—",
-                    "Raw uplift Ratio": f"{rat:.3f}"   if pd.notna(rat) else "—",
+                    "Uplift Ratio": f"{rat:.3f}"   if pd.notna(rat) else "—",
                 })
             st.dataframe(pd.DataFrame(ir), use_container_width=True, hide_index=True)
 
