@@ -697,7 +697,7 @@ def derive_eur_targets(df_2mile: pd.DataFrame,
 
 # UI
 def main():
-    st.title("🛢️ 2-Mile Type Curve Generator")
+    st.title("🛢️ 2-Mile Uplift & Decline Analysis")
     st.caption(
         "Raw comparison: 2-mile wells are compared against 1-mile wells using "
         "unscaled, direct raw metrics. EUR, IP30/IP90, 6-month cum and 12-month cum "
