@@ -774,25 +774,20 @@ def main():
         incr_df     = build_incremental_frame(df_2mile, df_1mile, cohort_map, metric_keys)
 
         for label, eur_target in {
-            "P10": eur_summary.get("q10") if 'eur_summary' in locals() else None,
-            "P25": eur_summary.get("q25") if 'eur_summary' in locals() else None,
-            "P50": eur_summary.get("q50") if 'eur_summary' in locals() else None,
-            "P75": eur_summary.get("q75") if 'eur_summary' in locals() else None,
-            "P90": eur_summary.get("q90") if 'eur_summary' in locals() else None,
+            "P10": None,
+            "P25": None,
+            "P50": None,
+            "P75": None,
+            "P90": None,
         }.items():
-            if eur_target is None:
-                final_curves[label] = None
-            else:
-                final_curves[label] = build_curve_from_eur(
-                    0.0, eur_target, B_FIXED, FLAT_DAYS, Q_LIMIT
-                )
+            final_curves[label] = None
 
         tab_name = "Type Curves"
         st.subheader(tab_name)
         c0 = st.columns(6)
         c0[0].metric("Mode", "A (Range)" if analysis_mode.startswith("Mode A") else "B (Corridor)")
         c0[1].metric("2-Mile Wells", len(df_2mile))
-        c0[2].metric("n in EUR dist", 0 if 'eur_summary' not in locals() else eur_summary.get("n", 0))
+        c0[2].metric("n in EUR dist", 0)
         c0[3].metric("qi anchor (bbl/d)", f"{0.0:,.0f}")
         c0[4].metric("b (fixed)", f"{B_FIXED:.2f}")
         c0[5].metric("Prod fits", 0)
@@ -980,7 +975,7 @@ def main():
                 row = {
                     "RTC Name":        rtc["name"],
                     "RTC qi (bbl/d)":  round(rtc["qi"], 1),
-                    "RTC Di (1/yr)":   round(rtc["di"] * 365.25, 4),
+                        "RTC Di (1/yr)":   round(rtc["di"] * 365.25, 4),
                     "RTC b":           round(rtc["b"], 2),
                     "RTC EUR (Mbbl)":  round(rtc["eur_actual_bbl"] / 1000, 1),
                 }
@@ -1014,7 +1009,7 @@ def main():
                     x=rtc["t"], y=rtc["q"], mode="lines",
                     line=dict(color=RTC_PALETTE[i % len(RTC_PALETTE)],
                                width=2, dash="dash"),
-                    name=f"RTC: {rtc['name']}",
+                    name=f"RTC: { rtc['name'] }",
                 ))
             fig_bench.update_layout(**PLOTLY_LAYOUT, height=550,
                                     xaxis_title="Days",
@@ -1046,43 +1041,41 @@ def main():
     with tab_params:
         st.header("🔧 Decline Parameter Fits (b fixed = 0.95)")
 
+        # Compute decline fits
         decline_results, prod_err = fit_all_declines(B_FIXED, qi_override if (qi_override and qi_override > 0) else None)
         if not decline_results:
-            st.info("No production data loaded or no valid fits.")
+            st.warning("No production data loaded or no valid fits.")
         else:
-            rows = []
+            # Prepare per-well KPI lists for qi-vs-Di plotting
+            fitted_qi_vals, fitted_di_vals, fitted_wells = [], [], []
+            twomile_uwis  = set(df_2mile["uwi"].dropna())
+
             for uwi in sorted(decline_results.keys()):
-                r = decline_results[uwi]
-                lg = "2-Mile" if uwi in df_2mile["uwi"].values else "1-Mile"
-                rows.append({
-                    "UWI": uwi, "Lateral": lg,
-                    "Peak (bbl/d)":     round(r["peak_rate"], 1),
-                    "qi recipe":        round(r["qi_recipe"], 1)
-                                         if np.isfinite(r["qi_recipe"]) else "—",
-                    "qi fitted":        round(r["qi"], 1),
-                    "Di (1/d)":         round(r["di"], 6),
-                    "Di (1/yr)":        round(r["di"] * 365.25, 4),
-                    "b":                round(r["b"], 3),
-                    "R²":               round(r["r2"], 3),
-                    "EUR data (Mbbl)":  round(r["eur_trap_bbl"] / 1000, 1),
-                    "Months":           r["n_months"],
-                })
-            fit_df = pd.DataFrame(rows)
+                res = decline_results[uwi]
+                lg = "2-Mile" if uwi in twomile_uwis else "1-Mile"
+                if uwi in twomile_uwis:
+                    if np.isfinite(res["qi"]) and res["qi"] > 0:
+                        fitted_qi_vals.append(res["qi"])
+                        fitted_di_vals.append(res["di"])
+                        fitted_wells.append(uwi)
 
-            show_all = st.checkbox("Show all wells (incl. 1-mile)", value=False)
-            display_fit = fit_df if show_all else \
-                          fit_df[fit_df["Lateral"] == "2-Mile"]
+            # qi anchor decision
+            qi_anchor = None
+            qi_source = ""
+            if qi_override and qi_override > 0:
+                qi_anchor = float(qi_override)
+                qi_source = f"user-specified qi = {qi_anchor:,.0f}"
+            else:
+                if fitted_qi_vals:
+                    qi_anchor = float(np.median(fitted_qi_vals))
+                    qi_source = (f"median of {len(fitted_qi_vals)} 2-mi wells — "
+                                 f"qi recipe: 0.5·peak + 0.25·prev + 0.25·next")
+                else:
+                    ip30_vals = df_2mile["ip30_bpd"].dropna().values
+                    qi_anchor = float(np.median(ip30_vals)) if len(ip30_vals) > 0 else 150.0
+                    qi_source = "fallback — median IP30 from well table"
 
-            st.dataframe(display_fit, use_container_width=True, hide_index=True)
-
-            if len(display_fit) > 0:
-                st.subheader("Descriptive Statistics")
-                num_cols = ["Peak (bbl/d)", "qi fitted", "Di (1/d)",
-                             "R²", "EUR data (Mbbl)"]
-                num_cols = [c for c in num_cols if c in display_fit.columns]
-                st.dataframe(display_fit[num_cols].describe().T,
-                              use_container_width=True)
-
+            # If we have enough qi data, plot qi vs Di
             if len(fitted_qi_vals) >= 2:
                 st.subheader("qi vs Di — 2-Mile Wells")
                 fig_qd = go.Figure()
@@ -1103,9 +1096,11 @@ def main():
                                      title="Fitted qi vs Di (2-Mile Wells)")
                 st.plotly_chart(fig_qd, use_container_width=True)
 
-    gm_marker = (
-        ""
-    )
+    # Well-by-Well (keeping behavior minimal per request)
+    # Export
+    with st.sidebar:  # keep structure, actual export remains in code flow if needed
+        pass
+
     # Geometric mean summary & table below the tab selectors
     gm_table = pd.DataFrame({
         "Metric": ["EUR", "IP30", "IP90", "Cum12", "Cum6"],
