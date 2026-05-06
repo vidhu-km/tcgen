@@ -452,6 +452,32 @@ def range_match(target_row, df_1mile, tolerances, active_features):
         mask &= df_1mile["on_prod_date"].notna() & (df_1mile["on_prod_date"] < tp)
     return df_1mile.loc[mask, "uwi"].tolist()
 
+def compute_incremental(well_row, comparator_df, metric_keys):
+    result = {"uwi": well_row["uwi"]}
+    Lh_2 = well_row.get("hz_length_m", np.nan)
+
+    for mk in metric_keys:
+        val = well_row.get(mk, np.nan)
+        if comparator_df.empty or pd.isna(val):
+            result[f"{mk}_baseline"]    = np.nan
+            result[f"{mk}_incremental"] = np.nan
+            result[f"{mk}_pct_uplift"]  = np.nan
+            result[f"{mk}_ratio"]       = np.nan
+            continue
+
+        bl_total = float(comparator_df[mk].median())
+        incr = float(val) - bl_total
+        pct  = (incr / bl_total * 100) if bl_total else np.nan
+        ratio = float(val) / bl_total if bl_total else np.nan
+
+        result[f"{mk}_baseline"]    = bl_total
+        result[f"{mk}_incremental"] = incr
+        result[f"{mk}_pct_uplift"]  = pct
+        result[f"{mk}_ratio"]       = ratio
+
+    result["n_comparators"] = len(comparator_df)
+    return result
+
 # Helper: compute per-well ratios (2mi vs median 1mi) for KPI uplift
 def compute_ratio_per_well_2mi_vs_1mi(df_2mi: pd.DataFrame,
                                       df_1mi: pd.DataFrame,
