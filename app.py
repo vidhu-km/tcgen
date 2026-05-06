@@ -452,6 +452,27 @@ def range_match(target_row, df_1mile, tolerances, active_features):
         mask &= df_1mile["on_prod_date"].notna() & (df_1mile["on_prod_date"] < tp)
     return df_1mile.loc[mask, "uwi"].tolist()
 
+def empirical_summary(values):
+    vals = np.array([v for v in values if np.isfinite(v)], dtype=float)
+    n = len(vals)
+    if n == 0:
+        return dict(n=0, median=np.nan, mean=np.nan, std=np.nan,
+                    min=np.nan, q10=np.nan, q25=np.nan, q50=np.nan,
+                    q75=np.nan, q90=np.nan, max=np.nan)
+    return dict(
+        n=n,
+        median=float(np.median(vals)),
+        mean=float(np.mean(vals)),
+        std=float(np.std(vals, ddof=1)) if n > 1 else np.nan,
+        min=float(np.min(vals)),
+        q10=float(np.percentile(vals, 10)),
+        q25=float(np.percentile(vals, 25)),
+        q50=float(np.percentile(vals, 50)),
+        q75=float(np.percentile(vals, 75)),
+        q90=float(np.percentile(vals, 90)),
+        max=float(np.max(vals)),
+    )
+
 def compute_incremental(well_row, comparator_df, metric_keys):
     result = {"uwi": well_row["uwi"]}
     Lh_2 = well_row.get("hz_length_m", np.nan)
