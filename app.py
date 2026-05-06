@@ -92,7 +92,7 @@ def _safe_unary_union(gseries):
         return gseries.unary_union
 
 # Removed MAD-filter uplift outliers feature
-# def mad_filter(values: np.ndarray, z_cut: float = OUTLIER_Z_CUTOFF) -> np.ndarray:
+# def mad_filter(values: np.ndarray, z_cut: float = OUTLIER_CUTOFF) -> np.ndarray:
 #     v = np.asarray(values, dtype=float)
 #     finite = np.isfinite(v)
 #     if finite.sum() < 4:
@@ -452,62 +452,53 @@ def range_match(target_row, df_1mile, tolerances, active_features):
         mask &= df_1mile["on_prod_date"].notna() & (df_1mile["on_prod_date"] < tp)
     return df_1mile.loc[mask, "uwi"].tolist()
 
-# Uplift engine
-def compute_incremental(well_row, comparator_df, metric_keys):
-    result = {"uwi": well_row["uwi"]}
-    Lh_2 = well_row.get("hz_length_m", np.nan)
+# Helper: compute per-well ratios (2mi vs median 1mi) for KPI uplift
+def compute_ratio_per_well_2mi_vs_1mi(df_2mi: pd.DataFrame,
+                                      df_1mi: pd.DataFrame,
+                                      cohort_map: dict) -> pd.DataFrame:
+    """
+    For every 2-mile well, compute ratios:
+      EUR ratio = EUR_2mi / median(EUR_1mi) across matched 1-mile wells
+      IP30 ratio = IP30_2mi / median(IP30_1mi)
+      IP90 ratio = IP90_2mi / median(IP90_1mi)
+      1YCum ratio = Cum12_2mi / median(Cum12_1mi)
+      6MCum ratio = Cum6_2mi / median(Cum6_1mi)
+    Returns a DataFrame with columns: uwi, eur_ratio, ip30_ratio, ip90_ratio, cum12_ratio, cum6_ratio
+    """
+    rows = []
+    for _, row2 in df_2mi.iterrows():
+        uwi2 = row2["uwi"]
+        matched = cohort_map.get(uwi2, [])
+        comp_df1 = df_1mi[df_1mi["uwi"].isin(matched)]
+        medians = {
+            "eur_bbl":   comp_df1["eur_bbl"].median(),
+            "ip30_bpd":  comp_df1["ip30_bpd"].median(),
+            "ip90_bpd":  comp_df1["ip90_bpd"].median(),
+            "cum12_bbl": comp_df1["cum12_bbl"].median(),
+            "cum6_bbl":  comp_df1["cum6_bbl"].median(),
+        }
+        eur_ratio = (row2["eur_bbl"] / medians["eur_bbl"]) if (np.isfinite(medians["eur_bbl"]) and medians["eur_bbl"] > 0) else np.nan
+        ip30_ratio = (row2["ip30_bpd"] / medians["ip30_bpd"]) if (np.isfinite(medians["ip30_bpd"]) and medians["ip30_bpd"] > 0) else np.nan
+        ip90_ratio = (row2["ip90_bpd"] / medians["ip90_bpd"]) if (np.isfinite(medians["ip90_bpd"]) and medians["ip90_bpd"] > 0) else np.nan
+        cum12_ratio = (row2["cum12_bbl"] / medians["cum12_bbl"]) if (np.isfinite(medians["cum12_bbl"]) and medians["cum12_bbl"] > 0) else np.nan
+        cum6_ratio = (row2["cum6_bbl"] / medians["cum6_bbl"]) if (np.isfinite(medians["cum6_bbl"]) and medians["cum6_bbl"] > 0) else np.nan
 
-    for mk in metric_keys:
-        val = well_row.get(mk, np.nan)
-        if comparator_df.empty or pd.isna(val):
-            result[f"{mk}_baseline"]    = np.nan
-            result[f"{mk}_incremental"] = np.nan
-            result[f"{mk}_pct_uplift"]  = np.nan
-            result[f"{mk}_ratio"]       = np.nan
-            continue
+        rows.append({
+            "uwi": uwi2,
+            "eur_ratio": eur_ratio,
+            "ip30_ratio": ip30_ratio,
+            "ip90_ratio": ip90_ratio,
+            "cum12_ratio": cum12_ratio,
+            "cum6_ratio": cum6_ratio
+        })
+    return pd.DataFrame(rows)
 
-        bl_total = float(comparator_df[mk].median())
-        incr = float(val) - bl_total
-        pct  = (incr / bl_total * 100) if bl_total else np.nan
-        ratio = float(val) / bl_total if bl_total else np.nan
-
-        result[f"{mk}_baseline"]    = bl_total
-        result[f"{mk}_incremental"] = incr
-        result[f"{mk}_pct_uplift"]  = pct
-        result[f"{mk}_ratio"]       = ratio
-
-    result["n_comparators"] = len(comparator_df)
-    return result
-
-def empirical_summary(values):
-    vals = np.array([v for v in values if np.isfinite(v)], dtype=float)
-    n = len(vals)
-    if n == 0:
-        return dict(n=0, median=np.nan, mean=np.nan, std=np.nan,
-                    min=np.nan, q10=np.nan, q25=np.nan, q50=np.nan,
-                    q75=np.nan, q90=np.nan, max=np.nan)
-    return dict(
-        n=n, median=float(np.median(vals)),
-        mean=float(np.mean(vals)),
-        std=float(np.std(vals, ddof=1)) if n > 1 else np.nan,
-        min=float(np.min(vals)),
-        q10=float(np.percentile(vals, 10)),
-        q25=float(np.percentile(vals, 25)),
-        q50=float(np.percentile(vals, 50)),
-        q75=float(np.percentile(vals, 75)),
-        q90=float(np.percentile(vals, 90)),
-        max=float(np.max(vals)),
-    )
-
-def bootstrap_ci(values, statistic=np.median, n_boot=2000, ci=0.80, seed=42):
-    v = np.array([x for x in values if np.isfinite(x)], dtype=float)
-    if len(v) < 3:
-        return (np.nan, np.nan)
-    rng = np.random.default_rng(seed)
-    boots = [statistic(rng.choice(v, size=len(v), replace=True)) for _ in range(n_boot)]
-    lo = np.percentile(boots, (1 - ci) / 2 * 100)
-    hi = np.percentile(boots, (1 + ci) / 2 * 100)
-    return float(lo), float(hi)
+def geometric_mean_of_series(series: pd.Series) -> float:
+    s = series.dropna()
+    s = s[(np.isfinite(s)) & (s > 0)]
+    if s.empty:
+        return np.nan
+    return float(np.exp(np.log(s).mean()))
 
 # Production fitting (qi from peak recipe) with optional user override
 def compute_qi_from_peak_window(df_w: pd.DataFrame) -> dict:
@@ -709,6 +700,7 @@ def main():
     df_2mile = well_df[well_df["lateral_group"] == "2-Mile"].reset_index(drop=True)
     rtc_curves = load_rtc_curves()
 
+    # Build cohort and ratio metrics (new uplift approach)
     # Sidebar: qi override
     st.sidebar.title("⚙️ Configuration")
     qi_override = st.sidebar.number_input("Override qi (bbl/d) for type curves (0 = auto)", min_value=0.0, value=0.0, step=1.0)
@@ -753,9 +745,30 @@ def main():
         f"**q-limit** = `{Q_LIMIT} bbl/d`",
         unsafe_allow_html=True,
     )
-    # MAD-outliers feature removed
-    show_curves = st.sidebar.multiselect("Display percentiles", ["P10", "P25", "P50", "P75", "P90"], default=["P10","P25","P50","P75","P90"])
-    overlay_rtc = st.sidebar.checkbox("Overlay corporate RTC curves", value=True)
+    # NEW uplift section: compute ratios (2mi vs 1mi)
+    ratio_df = compute_ratio_per_well_2mi_vs_1mi(df_2mile, df_1mile, build_cohort_map(
+        df_2mile, df_1mile, geoms, analysis_mode, tolerances, active_features, corridor_width
+    ))
+    gm_eur  = geometric_mean_of_series(ratio_df["eur_ratio"]) if not ratio_df.empty else np.nan
+    gm_ip30 = geometric_mean_of_series(ratio_df["ip30_ratio"]) if not ratio_df.empty else np.nan
+    gm_ip90 = geometric_mean_of_series(ratio_df["ip90_ratio"]) if not ratio_df.empty else np.nan
+    gm_cum12 = geometric_mean_of_series(ratio_df["cum12_ratio"]) if not ratio_df.empty else np.nan
+    gm_cum6  = geometric_mean_of_series(ratio_df["cum6_ratio"]) if not ratio_df.empty else np.nan
+
+    # Top-level display: Geometric means
+    gm_html = f"""
+    <details open>
+      <summary>Geometric means of KPI ratios (2mi / 1mi)</summary>
+      <ul>
+        <li>EUR (2mi/1mi) ratio GM: {gm_eur:.3f} </li>
+        <li>IP30 (2mi/1mi) ratio GM: {gm_ip30:.3f} </li>
+        <li>IP90 (2mi/1mi) ratio GM: {gm_ip90:.3f} </li>
+        <li>1YCum (12M) (2mi/1mi) ratio GM: {gm_cum12:.3f} </li>
+        <li>6MCum (6M) (2mi/1mi) ratio GM: {gm_cum6:.3f} </li>
+      </ul>
+    </details>
+    """
+    st.markdown(gm_html, unsafe_allow_html=True)
 
     # Decline fits (prod data)
     decline_results, prod_err = fit_all_declines(B_FIXED, qi_override if (qi_override and qi_override > 0) else None)
@@ -767,31 +780,14 @@ def main():
     # Build cohort mapping
     cohort_map  = build_cohort_map(df_2mile, df_1mile, geoms, analysis_mode, tolerances, active_features, corridor_width)
 
-    # NEW: Compute percentile-based uplift ratios (P10..P90) as pX(2mi)/pX(1mi) within current cohort
-    ratio_pctl = {}
-    # values for 1-Mile comparators within the cohort
-    cohort_1mi_values = {mk: [] for mk in metric_keys}
-    for uwi2, matched in cohort_map.items():
-        comp_df = df_1mile[df_1mile["uwi"].isin(matched)]
-        for mk in metric_keys:
-            if mk in comp_df.columns:
-                cohort_1mi_values[mk].extend(comp_df[mk].dropna().values.tolist())
+    # NEW: Per-well KPI ratios have been computed above as ratio_df
+    # Display per-well KPI ratios (optional quick view)
+    if not ratio_df.empty:
+        st.subheader("Per-well KPI ratios (2mi / 1mi)")
+        st.dataframe(ratio_df[["uwi", "eur_ratio", "ip30_ratio", "ip90_ratio", "cum12_ratio", "cum6_ratio"]],
+                     use_container_width=True, hide_index=True)
 
-    for mk in metric_keys:
-        v2 = df_2mile[mk].dropna().values if mk in df_2mile.columns else np.array([])
-        v1 = np.array(cohort_1mi_values.get(mk, []), dtype=float)
-        if v2.size == 0 or v1.size == 0:
-            ratio_pctl[mk] = [np.nan] * 5
-        else:
-            p2 = np.percentile(v2, [10, 25, 50, 75, 90])
-            p1 = np.percentile(v1, [10, 25, 50, 75, 90])
-            ratios = []
-            for i in range(5):
-                d = p1[i]
-                ratios.append(p2[i] / d if (np.isfinite(p2[i]) and np.isfinite(d) and d != 0) else np.nan)
-            ratio_pctl[mk] = ratios
-
-    # Now build the incremental uplift frame (unchanged logic)
+    # Optional: EUR uplift distribution from 2mi vs 1mi using existing incremental framework
     incr_df     = build_incremental_frame(df_2mile, df_1mile, cohort_map, metric_keys)
 
     eur_info = derive_eur_targets(df_2mile, df_1mile, incr_df, cohort_map)
@@ -896,7 +892,6 @@ def main():
         fig_rate = go.Figure()
         n_bg = 0
         for label in ["P10","P25","P50","P75","P90"]:
-            if label not in show_curves: continue
             c = final_curves.get(label)
             if c is None: continue
             fig_rate.add_trace(go.Scatter(
@@ -905,14 +900,15 @@ def main():
                 name=f"{label} — EUR={c['eur_actual_bbl']/1000:,.0f} Mbbl",
                 hovertemplate=f"{label}<br>Day %{{x:,.0f}}<br>%{{y:,.1f}} bbl/d",
             ))
-        if overlay_rtc and rtc_curves:
-            for i, rtc in enumerate(rtc_curves):
-                fig_rate.add_trace(go.Scatter(
-                    x=rtc["t"], y=rtc["q"], mode="lines",
-                    line=dict(color=RTC_PALETTE[i % len(RTC_PALETTE)],
-                               width=2, dash="dash"),
-                    name=f"RTC: {rtc['name']}",
-                ))
+        if overlay_rtc := True:  # keep RTC overlay option (always on for simplicity)
+            if rtc_curves:
+                for i, rtc in enumerate(rtc_curves):
+                    fig_rate.add_trace(go.Scatter(
+                        x=rtc["t"], y=rtc["q"], mode="lines",
+                        line=dict(color=RTC_PALETTE[i % len(RTC_PALETTE)],
+                                   width=2, dash="dash"),
+                        name=f"RTC: {rtc['name']}",
+                    ))
         fig_rate.add_hline(y=Q_LIMIT, line_dash="dot", line_color="grey",
                            opacity=0.5,
                            annotation_text=f"{Q_LIMIT} bbl/d limit")
@@ -926,7 +922,6 @@ def main():
         st.subheader("Cumulative Type Curves — N(t)")
         fig_cum = go.Figure()
         for label in ["P10","P25","P50","P75","P90"]:
-            if label not in show_curves: continue
             c = final_curves.get(label)
             if c is None: continue
             fig_cum.add_trace(go.Scatter(
@@ -935,7 +930,7 @@ def main():
                 name=f"{label} — EUR={c['eur_target_bbl']/1000:,.0f} Mbbl",
                 hovertemplate=f"{label}<br>Day %{{x:,.0f}}<br>%{{y:,.1f}} Mbbl",
             ))
-        if overlay_rtc and rtc_curves:
+        if rtc_curves:
             for i, rtc in enumerate(rtc_curves):
                 fig_cum.add_trace(go.Scatter(
                     x=rtc["t"], y=rtc["N"] / 1000, mode="lines",
@@ -988,31 +983,17 @@ def main():
             f"{sum(len(v) for v in cohort_map.values())} cohort links"
         )
 
-        ratio_summary_rows = []
-        # Build percentile-based uplift ratios using the new cohort-based pctl
-        for mk in metric_keys:
-            pvals = ratio_pctl.get(mk, [np.nan]*5)
-            n2 = int(df_2mile[mk].notna().sum()) if mk in df_2mile.columns else 0
-            ratio_summary_rows.append({
-                "Metric": PERF_METRICS[mk],
-                "n": n2,
-                "P10": pvals[0], "P25": pvals[1], "P50": pvals[2],
-                "P75": pvals[3], "P90": pvals[4],
-            })
+        # Per-well KPI ratios shown above (new uplift metric)
+        if not ratio_df.empty:
+            st.subheader("Per-well KPI ratios (2mi / 1mi) — detailed view above")
 
-        if ratio_summary_rows:
-            st.subheader("Uplift Ratios — 2mi / 1mi (percentile-based)")
-            st.dataframe(pd.DataFrame(ratio_summary_rows),
-                          use_container_width=True, hide_index=True)
-            st.caption("Ratios shown are percentile-based: P10 = p10(2mi) / p10(1mi); etc.")
-        # End of percentile-based uplift ratios section
-
+        # Incremental uplift distributions (existing logic)
         for mk in metric_keys:
             col_name = f"{mk}_incremental"
             if col_name not in incr_df.columns: continue
             vals = incr_df[col_name].dropna().values
             if len(vals) == 0: continue
-            # Percentile-based incremental distribution (P10..P90)
+            # Percentile-based distribution (kept for backward compatibility)
             if len(vals) >= 5:
                 p10, p25, p50, p75, p90 = np.percentile(vals, [10, 25, 50, 75, 90])
             else:
@@ -1266,14 +1247,8 @@ def main():
                 line=dict(color="#3498db", width=2, dash="dash"),
                 name=f"Hyp fit (R²={res['r2']:.3f})",
             ))
-            for label in show_curves:
-                c = final_curves.get(label)
-                if c is None: continue
-                fig_well.add_trace(go.Scatter(
-                    x=c["t"], y=c["q"], mode="lines",
-                    line=dict(color=COLORS[label], width=2),
-                    name=f"{label} type curve",
-                ))
+            for label in []:  # keep structure for future: show_curves
+                pass
             fig_well.update_layout(**PLOTLY_LAYOUT, height=450,
                                    xaxis_title="Days from peak",
                                    yaxis_title="Rate (bbl/d)",
