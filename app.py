@@ -28,7 +28,7 @@ SHP_2M_PATH      = "2M.shp"
 PROD_DATA_FILE   = "tcgenprod.xlsx"
 RTC_XLSX_PATH    = "rtc.xlsx"
 
-TARGET_METRIC_CRS       = "EPSG:3347"
+TARGET_METRIC_CRS       = "EPSG:26913"
 WATERFLOOD_BUFFER_M     = 200.0
 MILE_TO_M               = 1609.34
 CORRIDOR_HALF_WIDTH_M   = 900.0
