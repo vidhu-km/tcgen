@@ -14,14 +14,12 @@ import streamlit as st
 
 warnings.filterwarnings("ignore")
 
-# Page config
 st.set_page_config(
     page_title="2-Mile Well Analysis",
     page_icon="🛢️",
     layout="wide",
 )
 
-# Constants
 XLSX_PATH        = "w.xlsx"
 SHP_1M_PATH      = "1M.shp"
 SHP_2M_PATH      = "2M.shp"
@@ -33,10 +31,10 @@ WATERFLOOD_BUFFER_M     = 200.0
 MILE_TO_M               = 1609.34
 CORRIDOR_HALF_WIDTH_M   = 900.0
 
-Q_LIMIT            = 2.0          # economic limit (bbl/d)
+Q_LIMIT            = 2.0
 FLAT_MONTHS        = 1.44
 FLAT_DAYS          = int(round(FLAT_MONTHS * 30.4375))
-B_FIXED            = 0.95         # Arps exponent — LOCKED per spec
+B_FIXED            = 0.95
 DAYS_PER_MONTH_AVG = 30.4375
 
 MIN_COMPS_FOR_UPLIFT = 3
@@ -69,15 +67,17 @@ RTC_PALETTE = [
     "#2980b9", "#7f8c8d", "#d35400", "#27ae60",
 ]
 
-# Helpers
+
 def _std_uwi(s: pd.Series) -> pd.Series:
     return (
         s.astype(str).str.strip().str.upper()
         .replace({"NAN": np.nan, "NONE": np.nan, "": np.nan})
     )
 
+
 def _std_str(s: pd.Series) -> pd.Series:
     return _std_uwi(s)
+
 
 def require_cols(df: pd.DataFrame, required: list, df_name: str):
     missing = [c for c in required if c not in df.columns]
@@ -85,32 +85,21 @@ def require_cols(df: pd.DataFrame, required: list, df_name: str):
         st.error(f"{df_name} missing columns: {missing}")
         st.stop()
 
+
 def _safe_unary_union(gseries):
     try:
         return gseries.union_all()
     except AttributeError:
         return gseries.unary_union
 
-# Removed MAD-filter uplift outliers feature
-# def mad_filter(values: np.ndarray, z_cut: float = OUTLIER_CUTOFF) -> np.ndarray:
-#     v = np.asarray(values, dtype=float)
-#     finite = np.isfinite(v)
-#     if finite.sum() < 4:
-#         return finite
-#     med = np.median(v[finite])
-#     mad = np.median(np.abs(v[finite] - med))
-#     if mad == 0:
-#         return finite
-#     mz = 0.6745 * (v - med) / mad
-#     return finite & (np.abs(mz) <= z_cut)
 
-# Arps math
 def hyp_rate(t, qi, di, b):
     t = np.asarray(t, dtype=float)
     if b == 0:
         return qi * np.exp(-di * t)
     with np.errstate(divide="ignore", invalid="ignore"):
         return qi / np.power(1.0 + b * di * t, 1.0 / b)
+
 
 def cum_arps(t, qi, di, b):
     t = np.asarray(t, dtype=float)
@@ -124,12 +113,14 @@ def cum_arps(t, qi, di, b):
     power  = (b - 1.0) / b
     return factor * (1.0 - np.power(1.0 + b * di * t, power))
 
+
 def t_to_rate(di, qi, b, q_target):
     if q_target <= 0 or di <= 0:
         return np.inf
     if b == 0:
         return max(0.0, math.log(qi / q_target) / di)
     return max(0.0, ((qi / q_target) ** b - 1.0) / (b * di))
+
 
 def find_Di_for_eur_post(qi, eur_post, b, q_target, tol=1e-6):
     if eur_post <= 0 or qi <= q_target:
@@ -164,6 +155,7 @@ def find_Di_for_eur_post(qi, eur_post, b, q_target, tol=1e-6):
             lo = mid
     return 0.5 * (lo + hi)
 
+
 def fit_hyperbolic_fixed_b(t_days, q_vals, qi_fixed=None, b_fixed=B_FIXED):
     t = np.asarray(t_days, dtype=float)
     q = np.asarray(q_vals, dtype=float)
@@ -191,6 +183,7 @@ def fit_hyperbolic_fixed_b(t_days, q_vals, qi_fixed=None, b_fixed=B_FIXED):
     except Exception:
         return None
 
+
 def build_piecewise_curve(qi, di, b, flat_days=FLAT_DAYS, q_limit=Q_LIMIT):
     t_list = list(range(flat_days + 1))
     q_list = [qi] * (flat_days + 1)
@@ -204,6 +197,7 @@ def build_piecewise_curve(qi, di, b, flat_days=FLAT_DAYS, q_limit=Q_LIMIT):
             if q <= q_limit or t_dec > 60000:
                 break
     return np.array(t_list, dtype=float), np.array(q_list, dtype=float)
+
 
 def build_curve_from_eur(qi, eur_bbl, b, flat_days=FLAT_DAYS, q_limit=Q_LIMIT):
     eur_flat = qi * flat_days
@@ -225,12 +219,13 @@ def build_curve_from_eur(qi, eur_bbl, b, flat_days=FLAT_DAYS, q_limit=Q_LIMIT):
         "flat_days": int(flat_days),
     }
 
+
 def calc_eur_trap(t_arr, q_arr) -> float:
     if len(t_arr) < 2:
         return 0.0
     return float(np.trapezoid(q_arr, t_arr))
 
-# Data loaders
+
 REQUIRED_WELL_COLUMNS = [
     "UWI", "Section Name", "Well Type", "Hz Length (m)",
     "Oil + Cond: EUR (Mbbl)", "Oil + Cond: IP 30 Cal. Rate (bbl/d)",
@@ -250,6 +245,7 @@ RENAME_WELL = {
     "Objective": "objective", "On Prod Date": "on_prod_date",
     "On Inj Date": "on_inj_date", "FOOZ": "fooz",
 }
+
 
 @st.cache_data(show_spinner=False)
 def load_well_table():
@@ -278,6 +274,7 @@ def load_well_table():
     out["is_injector"]  = out["objective"].fillna("").eq("INJ")
     return out
 
+
 @st.cache_data(show_spinner=False)
 def load_section_ooip():
     xls = pd.ExcelFile(XLSX_PATH)
@@ -287,6 +284,7 @@ def load_section_ooip():
     out["Section"] = _std_str(out["Section"])
     out["OOIP"]    = pd.to_numeric(out["OOIP"], errors="coerce")
     return out.rename(columns={"Section": "section_name", "OOIP": "section_ooip"})
+
 
 @st.cache_resource(show_spinner=False)
 def load_geometries():
@@ -317,6 +315,7 @@ def load_geometries():
     )
     return gdf[["uwi", "lateral_group", "geometry", "midpoint"]].reset_index(drop=True)
 
+
 @st.cache_data(show_spinner=False)
 def load_production_data():
     if not os.path.exists(PROD_DATA_FILE):
@@ -342,6 +341,7 @@ def load_production_data():
     df["days_in_month"] = df["date"].dt.days_in_month
     df["monthly_vol"]   = df["rate"] * df["days_in_month"]
     return df, None
+
 
 @st.cache_data(show_spinner=False)
 def load_rtc_curves():
@@ -370,7 +370,7 @@ def load_rtc_curves():
             continue
     return curves
 
-# Spatial analytics
+
 @st.cache_resource(show_spinner=False)
 def compute_spatial_features(_geoms_gdf, _well_meta):
     if _geoms_gdf.empty:
@@ -428,6 +428,7 @@ def compute_spatial_features(_geoms_gdf, _well_meta):
         ))
     return pd.DataFrame(rows)
 
+
 def corridor_match(target_geom, geoms_gdf, half_width=CORRIDOR_HALF_WIDTH_M):
     if target_geom is None or target_geom.is_empty:
         return []
@@ -438,6 +439,7 @@ def corridor_match(target_geom, geoms_gdf, half_width=CORRIDOR_HALF_WIDTH_M):
         lambda mp: mp is not None and not mp.is_empty and corridor.contains(mp)
     )
     return ones.loc[inside, "uwi"].tolist()
+
 
 def range_match(target_row, df_1mile, tolerances, active_features):
     if df_1mile.empty: return []
@@ -451,6 +453,7 @@ def range_match(target_row, df_1mile, tolerances, active_features):
     if pd.notna(tp) and "on_prod_date" in df_1mile.columns:
         mask &= df_1mile["on_prod_date"].notna() & (df_1mile["on_prod_date"] < tp)
     return df_1mile.loc[mask, "uwi"].tolist()
+
 
 def empirical_summary(values):
     vals = np.array([v for v in values if np.isfinite(v)], dtype=float)
@@ -473,9 +476,9 @@ def empirical_summary(values):
         max=float(np.max(vals)),
     )
 
+
 def compute_incremental(well_row, comparator_df, metric_keys):
     result = {"uwi": well_row["uwi"]}
-    Lh_2 = well_row.get("hz_length_m", np.nan)
 
     for mk in metric_keys:
         val = well_row.get(mk, np.nan)
@@ -499,19 +502,10 @@ def compute_incremental(well_row, comparator_df, metric_keys):
     result["n_comparators"] = len(comparator_df)
     return result
 
-# Helper: compute per-well ratios (2mi vs median 1mi) for KPI uplift
+
 def compute_ratio_per_well_2mi_vs_1mi(df_2mi: pd.DataFrame,
                                       df_1mi: pd.DataFrame,
                                       cohort_map: dict) -> pd.DataFrame:
-    """
-    For every 2-mile well, compute ratios:
-      EUR ratio = EUR_2mi / median(EUR_1mi) across matched 1-mile wells
-      IP30 ratio = IP30_2mi / median(IP30_1mi)
-      IP90 ratio = IP90_2mi / median(IP90_1mi)
-      1YCum ratio = Cum12_2mi / median(Cum12_1mi)
-      6MCum ratio = Cum6_2mi / median(Cum6_1mi)
-    Returns a DataFrame with columns: uwi, eur_ratio, ip30_ratio, ip90_ratio, cum12_ratio, cum6_ratio
-    """
     rows = []
     for _, row2 in df_2mi.iterrows():
         uwi2 = row2["uwi"]
@@ -540,6 +534,7 @@ def compute_ratio_per_well_2mi_vs_1mi(df_2mi: pd.DataFrame,
         })
     return pd.DataFrame(rows)
 
+
 def geometric_mean_of_series(series: pd.Series) -> float:
     s = series.dropna()
     s = s[(np.isfinite(s)) & (s > 0)]
@@ -547,7 +542,7 @@ def geometric_mean_of_series(series: pd.Series) -> float:
         return np.nan
     return float(np.exp(np.log(s).mean()))
 
-# Production fitting (qi from peak recipe) with optional user override
+
 def compute_qi_from_peak_window(df_w: pd.DataFrame) -> dict:
     df_w = df_w.sort_values("date").reset_index(drop=True)
     if df_w.empty:
@@ -575,17 +570,16 @@ def compute_qi_from_peak_window(df_w: pd.DataFrame) -> dict:
     return dict(qi=qi, peak_date=peak_date, peak_rate=peak_rate,
                 peak_idx=peak_idx, used_months=used)
 
+
 def analyse_well_production(df_w: pd.DataFrame, b_fixed: float = B_FIXED, qi_override: Optional[float] = None) -> dict:
     df_w = df_w.sort_values("date").reset_index(drop=True)
     peak_info = compute_qi_from_peak_window(df_w)
     qi = peak_info["qi"]
     peak_date = peak_info["peak_date"]
-    peak_idx  = peak_info["peak_idx"]
 
     df_w["t_days"] = (df_w["date"] - peak_date).dt.days.astype(float)
     df_decline = df_w[df_w["t_days"] > 0].copy()
 
-    # Anchor qi from override if provided
     qi_anchor = qi_override if (qi_override is not None and np.isfinite(qi_override)) else qi
 
     hyp = None
@@ -616,14 +610,14 @@ def analyse_well_production(df_w: pd.DataFrame, b_fixed: float = B_FIXED, qi_ove
 
     return dict(
         uwi=df_w["uwi"].iloc[0],
-        peak_rate=peak_info["peak_rate"], peak_date= peak_date,
+        peak_rate=peak_info["peak_rate"], peak_date=peak_date,
         qi=qi_h, di=di_h, b=b_h, r2=r2,
         qi_recipe=qi, qi_used_months=peak_info["used_months"],
         eur_trap_bbl=eur_trap, n_months=len(df_w),
         df_post=df_w[df_w["t_days"] >= 0].copy(),
     )
 
-# Assembly
+
 @st.cache_data(show_spinner="Loading well table & geometries…")
 def load_and_assemble_wells():
     well_raw = load_well_table()
@@ -647,6 +641,7 @@ def load_and_assemble_wells():
     well_df = well_df[~well_df["is_fooz"]].reset_index(drop=True)
     return well_df, geoms
 
+
 @st.cache_data(show_spinner="Fitting decline parameters on production data…")
 def fit_all_declines(b_fixed, qi_override=None):
     prod_df, err = load_production_data()
@@ -659,7 +654,7 @@ def fit_all_declines(b_fixed, qi_override=None):
         results[uwi] = analyse_well_production(grp, b_fixed, qi_override)
     return results, None
 
-# Cohort + uplift builder
+
 def build_cohort_map(df_2mile, df_1mile, geoms, analysis_mode,
                      tolerances, active_features, corridor_width):
     mapping = {}
@@ -676,6 +671,7 @@ def build_cohort_map(df_2mile, df_1mile, geoms, analysis_mode,
         mapping[uwi2] = matched
     return mapping
 
+
 def build_incremental_frame(df_2mile, df_1mile, cohort_map, metric_keys):
     records = []
     for _, row2 in df_2mile.iterrows():
@@ -691,7 +687,7 @@ def build_incremental_frame(df_2mile, df_1mile, cohort_map, metric_keys):
         records.append(rec)
     return pd.DataFrame(records) if records else pd.DataFrame(columns=["uwi"])
 
-# EUR target builder (mode-dependent)
+
 def derive_eur_targets(df_2mile: pd.DataFrame,
                        df_1mile: pd.DataFrame,
                        incr_df: pd.DataFrame,
@@ -733,7 +729,7 @@ def derive_eur_targets(df_2mile: pd.DataFrame,
     results["Lh_typical_m"]  = Lh_typ
     return results
 
-# UI
+
 def main():
     st.title("🛢️ 2-Mile Uplift & Decline Analysis")
     st.caption(
@@ -747,19 +743,15 @@ def main():
     df_2mile = well_df[well_df["lateral_group"] == "2-Mile"].reset_index(drop=True)
     rtc_curves = load_rtc_curves()
 
-    # Build cohort and ratio metrics (new uplift approach)
-    # Sidebar: qi override
     st.sidebar.title("⚙️ Configuration")
     qi_override = st.sidebar.number_input("Override qi (bbl/d) for type curves (0 = auto)", min_value=0.0, value=0.0, step=1.0)
 
-    # UI: analysis mode
     analysis_mode = st.sidebar.radio(
         "Analog Matching Mode",
         ["Mode A: Range-Based Analog Matching", "Mode B: Geometric Corridor"],
         key="analysis_mode_radio",
     )
 
-    # tolerances / features
     st.sidebar.divider()
     active_features, tolerances = [], {}
     corridor_width = CORRIDOR_HALF_WIDTH_M
@@ -770,7 +762,6 @@ def main():
         if well_df["section_ooip"].notna().any():         available.append("section_ooip")
         if well_df["nearest_producer_m"].notna().any():   available.append("nearest_producer_m")
         if well_df["nearest_injector_m"].notna().any():   available.append("nearest_injector_m")
-        # Remove MAD-outliers toggle; keep only active features by default
         active_features = st.sidebar.multiselect("Active features", available, default=available)
         if "section_ooip" in active_features:
             tolerances["section_ooip"] = st.sidebar.number_input("± OOIP tol", 0.0, 1e6, 250000.0, 1e5)
@@ -792,55 +783,27 @@ def main():
         f"**q-limit** = `{Q_LIMIT} bbl/d`",
         unsafe_allow_html=True,
     )
-    # NEW uplift section: compute ratios (2mi vs 1mi)
-    ratio_df = compute_ratio_per_well_2mi_vs_1mi(df_2mile, df_1mile, build_cohort_map(
-        df_2mile, df_1mile, geoms, analysis_mode, tolerances, active_features, corridor_width
-    ))
-    gm_eur  = geometric_mean_of_series(ratio_df["eur_ratio"]) if not ratio_df.empty else np.nan
-    gm_ip30 = geometric_mean_of_series(ratio_df["ip30_ratio"]) if not ratio_df.empty else np.nan
-    gm_ip90 = geometric_mean_of_series(ratio_df["ip90_ratio"]) if not ratio_df.empty else np.nan
+
+    cohort_map = build_cohort_map(df_2mile, df_1mile, geoms, analysis_mode, tolerances, active_features, corridor_width)
+
+    ratio_df = compute_ratio_per_well_2mi_vs_1mi(df_2mile, df_1mile, cohort_map)
+    gm_eur   = geometric_mean_of_series(ratio_df["eur_ratio"]) if not ratio_df.empty else np.nan
+    gm_ip30  = geometric_mean_of_series(ratio_df["ip30_ratio"]) if not ratio_df.empty else np.nan
+    gm_ip90  = geometric_mean_of_series(ratio_df["ip90_ratio"]) if not ratio_df.empty else np.nan
     gm_cum12 = geometric_mean_of_series(ratio_df["cum12_ratio"]) if not ratio_df.empty else np.nan
     gm_cum6  = geometric_mean_of_series(ratio_df["cum6_ratio"]) if not ratio_df.empty else np.nan
 
-    # Top-level display: Geometric means
-    gm_html = f"""
-    <details open>
-      <summary>Geometric means of KPI ratios (2mi / 1mi)</summary>
-      <ul>
-        <li>EUR (2mi/1mi) ratio GM: {gm_eur:.3f} </li>
-        <li>IP30 (2mi/1mi) ratio GM: {gm_ip30:.3f} </li>
-        <li>IP90 (2mi/1mi) ratio GM: {gm_ip90:.3f} </li>
-        <li>1YCum (12M) (2mi/1mi) ratio GM: {gm_cum12:.3f} </li>
-        <li>6MCum (6M) (2mi/1mi) ratio GM: {gm_cum6:.3f} </li>
-      </ul>
-    </details>
-    """
-    st.markdown(gm_html, unsafe_allow_html=True)
-
-    # Decline fits (prod data)
     decline_results, prod_err = fit_all_declines(B_FIXED, qi_override if (qi_override and qi_override > 0) else None)
     if prod_err:
         st.warning(f"⚠️ Production data issue: {prod_err}. Decline fitting skipped — qi will fall back to IP30 from the well table.")
 
     metric_keys = list(PERF_METRICS.keys())
 
-    # Build cohort mapping
-    cohort_map  = build_cohort_map(df_2mile, df_1mile, geoms, analysis_mode, tolerances, active_features, corridor_width)
-
-    # NEW: Per-well KPI ratios have been computed above as ratio_df
-    # Display per-well KPI ratios (optional quick view)
-    if not ratio_df.empty:
-        st.subheader("Per-well KPI ratios (2mi / 1mi)")
-        st.dataframe(ratio_df[["uwi", "eur_ratio", "ip30_ratio", "ip90_ratio", "cum12_ratio", "cum6_ratio"]],
-                     use_container_width=True, hide_index=True)
-
-    # Optional: EUR uplift distribution from 2mi vs 1mi using existing incremental framework
-    incr_df     = build_incremental_frame(df_2mile, df_1mile, cohort_map, metric_keys)
+    incr_df = build_incremental_frame(df_2mile, df_1mile, cohort_map, metric_keys)
 
     eur_info = derive_eur_targets(df_2mile, df_1mile, incr_df, cohort_map)
     equiv_eurs = np.array(eur_info.get("per_well_equivalent_eur", []), dtype=float)
 
-    # Original EUR distribution logic for Type Curves
     if len(equiv_eurs) >= MIN_COMPS_FOR_UPLIFT:
         eur_dist   = equiv_eurs
         eur_source = (f"empirical uplift from {len(equiv_eurs)} 2-mi wells "
@@ -853,7 +816,6 @@ def main():
 
     eur_summary = empirical_summary(eur_dist)
 
-    # qi anchor (allow override)
     twomile_uwis  = set(df_2mile["uwi"].dropna())
     fitted_qi_vals, fitted_di_vals, fitted_wells = [], [], []
     qi_anchor = None
@@ -879,7 +841,6 @@ def main():
             qi_anchor = float(np.median(ip30_vals)) if len(ip30_vals) > 0 else 150.0
             qi_source = "fallback — median IP30 from well table"
 
-    # Final curves
     pct_targets = {
         "P10": eur_summary["q10"], "P25": eur_summary["q25"],
         "P50": eur_summary["q50"], "P75": eur_summary["q75"],
@@ -893,13 +854,87 @@ def main():
         else:
             final_curves[label] = None
 
-    tab_curves, tab_uplift, tab_rtc, tab_params, tab_well, tab_export = st.tabs([
-        "📈 Type Curves", "📊 Uplift Analysis", "🆚 vs RTC",
+    tab_uplift, tab_curves, tab_rtc, tab_params, tab_well, tab_export = st.tabs([
+        "📊 Uplift Analysis", "📈 Type Curves", "🆚 vs RTC",
         "🔧 Fitted Parameters", "🔍 Well-by-Well",
         "📥 Export",
     ])
 
-    # Type Curves
+    with tab_uplift:
+        st.header("📊 Empirical Uplift (2-Mile vs 1-Mile)")
+        mode_label = ("Range-Based" if analysis_mode.startswith("Mode A")
+                      else f"Corridor (±{int(corridor_width)} m)")
+        st.caption(
+            f"Mode: **{mode_label}** · {len(df_2mile)} two-mile wells · "
+            f"{len(df_1mile)} one-mile wells · "
+            f"{sum(len(v) for v in cohort_map.values())} cohort links"
+        )
+
+        st.subheader("Geometric Means of KPI Ratios (2mi / 1mi)")
+        gm_cols = st.columns(5)
+        gm_cols[0].metric("EUR Ratio GM", f"{gm_eur:.3f}" if np.isfinite(gm_eur) else "—")
+        gm_cols[1].metric("IP30 Ratio GM", f"{gm_ip30:.3f}" if np.isfinite(gm_ip30) else "—")
+        gm_cols[2].metric("IP90 Ratio GM", f"{gm_ip90:.3f}" if np.isfinite(gm_ip90) else "—")
+        gm_cols[3].metric("1YCum Ratio GM", f"{gm_cum12:.3f}" if np.isfinite(gm_cum12) else "—")
+        gm_cols[4].metric("6MCum Ratio GM", f"{gm_cum6:.3f}" if np.isfinite(gm_cum6) else "—")
+
+        st.subheader("Per-Well KPI Ratios (2mi / median 1mi)")
+        if not ratio_df.empty:
+            st.dataframe(ratio_df[["uwi", "eur_ratio", "ip30_ratio", "ip90_ratio", "cum12_ratio", "cum6_ratio"]],
+                         use_container_width=True, hide_index=True)
+        else:
+            st.info("No ratio data available.")
+
+        for mk in metric_keys:
+            col_name = f"{mk}_incremental"
+            if col_name not in incr_df.columns: continue
+            vals = incr_df[col_name].dropna().values
+            if len(vals) == 0: continue
+            if len(vals) >= 5:
+                p10, p25, p50, p75, p90 = np.percentile(vals, [10, 25, 50, 75, 90])
+            else:
+                p10 = p25 = p50 = p75 = p90 = np.nan
+
+            with st.expander(
+                f"**{PERF_METRICS[mk]}** — incremental distribution (n={len(vals)})",
+                expanded=(mk == "eur_bbl"),
+            ):
+                mc = st.columns(5)
+                mc[0].metric("P10", f"{p10:+,.0f}" if np.isfinite(p10) else "—")
+                mc[1].metric("P25", f"{p25:+,.0f}" if np.isfinite(p25) else "—")
+                mc[2].metric("P50", f"{p50:+,.0f}" if np.isfinite(p50) else "—")
+                mc[3].metric("P75", f"{p75:+,.0f}" if np.isfinite(p75) else "—")
+                mc[4].metric("P90", f"{p90:+,.0f}" if np.isfinite(p90) else "—")
+
+                sub = incr_df.dropna(subset=[col_name])\
+                             .sort_values(col_name, ascending=False)
+                if not sub.empty:
+                    bar_colors = [COLORS["incremental"] if v >= 0 else "#d62728"
+                                  for v in sub[col_name]]
+                    fig_wf = go.Figure(go.Bar(
+                        x=sub["uwi"], y=sub[col_name],
+                        marker_color=bar_colors,
+                        text=[f"{v:+,.0f}" for v in sub[col_name]],
+                        textposition="outside",
+                    ))
+                    fig_wf.add_hline(y=0, line=dict(color="gray", dash="dot"))
+                    fig_wf.update_layout(
+                        **PLOTLY_LAYOUT, height=400,
+                        title=f"Incremental {PERF_METRICS[mk]} per 2-Mile Well",
+                        yaxis_title=f"Δ {PERF_METRICS[mk]}",
+                    )
+                    st.plotly_chart(fig_wf, use_container_width=True)
+
+        st.subheader("Full Incremental Results")
+        disp_cols = ["uwi", "section_name", "n_comparators",
+                     "eur_bbl", "eur_bbl_baseline", "eur_bbl_incremental",
+                     "eur_bbl_pct_uplift", "eur_bbl_ratio",
+                     "ip30_bpd", "ip30_bpd_incremental",
+                     "ip30_bpd_pct_uplift", "ip30_bpd_ratio",
+                     "waterflood_flag", "vintage_year"]
+        disp_cols = [c for c in disp_cols if c in incr_df.columns]
+        st.dataframe(incr_df[disp_cols], use_container_width=True, hide_index=True)
+
     with tab_curves:
         st.header("Type Curves")
 
@@ -910,8 +945,6 @@ def main():
         c0[3].metric("qi anchor (bbl/d)", f"{qi_anchor:,.0f}")
         c0[4].metric("b (fixed)", f"{B_FIXED:.2f}")
         c0[5].metric("Prod fits", len(fitted_wells))
-
-        # Optional explanatory note removed to keep UI concise
 
         st.subheader("Curve Parameters")
         param_rows = []
@@ -934,10 +967,8 @@ def main():
                 })
         st.dataframe(pd.DataFrame(param_rows), use_container_width=True, hide_index=True)
 
-        # Rate plot
         st.subheader("Rate Type Curves — q(t)")
         fig_rate = go.Figure()
-        n_bg = 0
         for label in ["P10","P25","P50","P75","P90"]:
             c = final_curves.get(label)
             if c is None: continue
@@ -947,15 +978,14 @@ def main():
                 name=f"{label} — EUR={c['eur_actual_bbl']/1000:,.0f} Mbbl",
                 hovertemplate=f"{label}<br>Day %{{x:,.0f}}<br>%{{y:,.1f}} bbl/d",
             ))
-        if overlay_rtc := True:  # keep RTC overlay option (always on for simplicity)
-            if rtc_curves:
-                for i, rtc in enumerate(rtc_curves):
-                    fig_rate.add_trace(go.Scatter(
-                        x=rtc["t"], y=rtc["q"], mode="lines",
-                        line=dict(color=RTC_PALETTE[i % len(RTC_PALETTE)],
-                                   width=2, dash="dash"),
-                        name=f"RTC: {rtc['name']}",
-                    ))
+        if rtc_curves:
+            for i, rtc in enumerate(rtc_curves):
+                fig_rate.add_trace(go.Scatter(
+                    x=rtc["t"], y=rtc["q"], mode="lines",
+                    line=dict(color=RTC_PALETTE[i % len(RTC_PALETTE)],
+                               width=2, dash="dash"),
+                    name=f"RTC: {rtc['name']}",
+                ))
         fig_rate.add_hline(y=Q_LIMIT, line_dash="dot", line_color="grey",
                            opacity=0.5,
                            annotation_text=f"{Q_LIMIT} bbl/d limit")
@@ -1019,74 +1049,6 @@ def main():
         else:
             st.warning("No EUR distribution data available.")
 
-    # Uplift analysis
-    with tab_uplift:
-        st.header("📊 Empirical Uplift (2-Mile vs 1-Mile)")
-        mode_label = ("Range-Based" if analysis_mode.startswith("Mode A")
-                      else f"Corridor (±{int(corridor_width)} m)")
-        st.caption(
-            f"Mode: **{mode_label}** · {len(df_2mile)} two-mile wells · "
-            f"{len(df_1mile)} one-mile wells · "
-            f"{sum(len(v) for v in cohort_map.values())} cohort links"
-        )
-
-        # Per-well KPI ratios shown above (new uplift metric)
-        if not ratio_df.empty:
-            st.subheader("Per-well KPI ratios (2mi / 1mi) — detailed view above")
-
-        # Incremental uplift distributions (existing logic)
-        for mk in metric_keys:
-            col_name = f"{mk}_incremental"
-            if col_name not in incr_df.columns: continue
-            vals = incr_df[col_name].dropna().values
-            if len(vals) == 0: continue
-            # Percentile-based distribution (kept for backward compatibility)
-            if len(vals) >= 5:
-                p10, p25, p50, p75, p90 = np.percentile(vals, [10, 25, 50, 75, 90])
-            else:
-                p10 = p25 = p50 = p75 = p90 = np.nan
-
-            with st.expander(
-                f"**{PERF_METRICS[mk]}** — incremental distribution (n={len(vals)})",
-                expanded=(mk == "eur_bbl"),
-            ):
-                mc = st.columns(5)
-                mc[0].metric("P10", f"{p10:+,.0f}" if np.isfinite(p10) else "—")
-                mc[1].metric("P25", f"{p25:+,.0f}" if np.isfinite(p25) else "—")
-                mc[2].metric("P50", f"{p50:+,.0f}" if np.isfinite(p50) else "—")
-                mc[3].metric("P75", f"{p75:+,.0f}" if np.isfinite(p75) else "—")
-                mc[4].metric("P90", f"{p90:+,.0f}" if np.isfinite(p90) else "—")
-
-                sub = incr_df.dropna(subset=[col_name])\
-                             .sort_values(col_name, ascending=False)
-                if not sub.empty:
-                    bar_colors = [COLORS["incremental"] if v >= 0 else "#d62728"
-                                  for v in sub[col_name]]
-                    fig_wf = go.Figure(go.Bar(
-                        x=sub["uwi"], y=sub[col_name],
-                        marker_color=bar_colors,
-                        text=[f"{v:+,.0f}" for v in sub[col_name]],
-                        textposition="outside",
-                    ))
-                    fig_wf.add_hline(y=0, line=dict(color="gray", dash="dot"))
-                    fig_wf.update_layout(
-                        **PLOTLY_LAYOUT, height=400,
-                        title=f"Incremental {PERF_METRICS[mk]} per 2-Mile Well",
-                        yaxis_title=f"Δ {PERF_METRICS[mk]}",
-                    )
-                    st.plotly_chart(fig_wf, use_container_width=True)
-
-        st.subheader("Full Incremental Results")
-        disp_cols = ["uwi", "section_name", "n_comparators",
-                     "eur_bbl", "eur_bbl_baseline", "eur_bbl_incremental",
-                     "eur_bbl_pct_uplift", "eur_bbl_ratio",
-                     "ip30_bpd", "ip30_bpd_incremental",
-                     "ip30_bpd_pct_uplift", "ip30_bpd_ratio",
-                     "waterflood_flag", "vintage_year"]
-        disp_cols = [c for c in disp_cols if c in incr_df.columns]
-        st.dataframe(incr_df[disp_cols], use_container_width=True, hide_index=True)
-
-    # vs RTC
     with tab_rtc:
         st.header("🆚 Benchmarking vs Corporate RTC Curves (`rtc.xlsx`)")
         if not rtc_curves:
@@ -1162,7 +1124,6 @@ def main():
                                      title="EUR Comparison")
             st.plotly_chart(fig_eurbar, use_container_width=True)
 
-    # Fitted Parameters
     with tab_params:
         st.header("🔧 Decline Parameter Fits (b fixed = 0.95)")
 
@@ -1222,7 +1183,6 @@ def main():
                                      title="Fitted qi vs Di (2-Mile Wells)")
                 st.plotly_chart(fig_qd, use_container_width=True)
 
-    # Well-by-Well
     with tab_well:
         st.header("🔍 Well-by-Well Diagnostic")
         if df_2mile.empty:
@@ -1294,8 +1254,6 @@ def main():
                 line=dict(color="#3498db", width=2, dash="dash"),
                 name=f"Hyp fit (R²={res['r2']:.3f})",
             ))
-            for label in []:  # keep structure for future: show_curves
-                pass
             fig_well.update_layout(**PLOTLY_LAYOUT, height=450,
                                    xaxis_title="Days from peak",
                                    yaxis_title="Rate (bbl/d)",
@@ -1307,13 +1265,12 @@ def main():
         comp_uwis = cohort_map.get(sel_uwi, [])
         if comp_uwis:
             with st.expander("📋 Comparator 1-mile wells", expanded=False):
-                comp_df = data = df_1mile[df_1mile["uwi"].isin(comp_uwis)]
+                comp_df = df_1mile[df_1mile["uwi"].isin(comp_uwis)]
                 disp = ["uwi", "section_name", "hz_length_m",
                         "eur_bbl", "ip30_bpd", "on_prod_date"]
                 disp = [c for c in disp if c in comp_df.columns]
                 st.dataframe(comp_df[disp], use_container_width=True, hide_index=True)
 
-    # Export
     with tab_export:
         st.header("📥 Export Results")
 
@@ -1457,6 +1414,7 @@ def main():
                 file_name="2mile_type_curves_raw.csv",
                 mime="text/csv",
             )
+
 
 if __name__ == "__main__":
     main()
