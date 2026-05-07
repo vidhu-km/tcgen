@@ -49,10 +49,9 @@ COLORS = {
 
 PERF_METRICS = {
     "eur_bbl":      "EUR (bbl)",
-    "ip30_bpd":     "IP30 (bbl/d)",
     "ip90_bpd":     "IP90 (bbl/d)",
-    "cum6_bbl":     "6-Month Cum (bbl)",
-    "cum12_bbl":    "12-Month Cum (bbl)",
+    "sixm_bpd":     "6M Cal. Rate (bbl/d)",
+    "twelvem_bpd":  "12M Cal. Rate (bbl/d)",
 }
 
 PLOTLY_LAYOUT = dict(
@@ -228,20 +227,18 @@ def calc_eur_trap(t_arr, q_arr) -> float:
 
 REQUIRED_WELL_COLUMNS = [
     "UWI", "Section Name", "Well Type", "Hz Length (m)",
-    "Oil + Cond: EUR (Mbbl)", "Oil + Cond: IP 30 Cal. Rate (bbl/d)",
-    "Oil + Cond: IP 90 Cal. Rate (bbl/d)", "Oil + Cond: 6M CalTime Cum (Mbbl)",
-    "Oil + Cond: 12M CalTime Cum (Mbbl)", "Objective", "On Prod Date",
-    "On Inj Date", "FOOZ",
+    "Oil + Cond: EUR (Mbbl)", "Oil + Cond: IP 90 Cal. Rate (bbl/d)",
+    "Oil + Cond: 6M Cal. Rate (bbl/d)", "Oil + Cond: 12M Cal. Rate (bbl/d)",
+    "Objective", "On Prod Date", "On Inj Date", "FOOZ",
 ]
 
 RENAME_WELL = {
     "UWI": "uwi", "Section Name": "section_name", "Well Type": "well_type",
     "Hz Length (m)": "hz_length_m",
     "Oil + Cond: EUR (Mbbl)": "eur_mbbl",
-    "Oil + Cond: IP 30 Cal. Rate (bbl/d)": "ip30_bpd",
     "Oil + Cond: IP 90 Cal. Rate (bbl/d)": "ip90_bpd",
-    "Oil + Cond: 6M CalTime Cum (Mbbl)": "cum6_mbbl",
-    "Oil + Cond: 12M CalTime Cum (Mbbl)": "cum12_mbbl",
+    "Oil + Cond: 6M Cal. Rate (bbl/d)": "sixm_bpd",
+    "Oil + Cond: 12M Cal. Rate (bbl/d)": "twelvem_bpd",
     "Objective": "objective", "On Prod Date": "on_prod_date",
     "On Inj Date": "on_inj_date", "FOOZ": "fooz",
 }
@@ -259,15 +256,14 @@ def load_well_table():
     for c in ["on_prod_date", "on_inj_date"]:
         if c in out.columns:
             out[c] = pd.to_datetime(out[c], errors="coerce")
-    for c_mbbl, c_bbl in [("eur_mbbl", "eur_bbl"),
-                           ("cum6_mbbl", "cum6_bbl"),
-                           ("cum12_mbbl", "cum12_bbl")]:
-        if c_mbbl in out.columns:
-            out[c_bbl] = pd.to_numeric(out[c_mbbl], errors="coerce") * 1000.0
-    for c in ["hz_length_m", "ip30_bpd", "ip90_bpd",
-              "eur_bbl", "cum6_bbl", "cum12_bbl"]:
+    # Convert EUR and the new 6M/12M rate columns to numeric
+    if "eur_mbbl" in out.columns:
+        out["eur_bbl"] = pd.to_numeric(out["eur_mbbl"], errors="coerce") * 1000.0
+    for c in ["hz_length_m", "ip90_bpd", "sixm_bpd", "twelvem_bpd",
+              "eur_bbl"]:
         if c in out.columns:
             out[c] = pd.to_numeric(out[c], errors="coerce")
+    # Remove any old cum columnas (no longer used)
     out = out.replace([np.inf, -np.inf], np.nan)
     out["vintage_year"] = out["on_prod_date"].dt.year
     out["is_fooz"]      = out["fooz"].fillna("").eq("YES")
@@ -510,27 +506,24 @@ def compute_ratio_per_well_2mi_vs_1mi(df_2mi: pd.DataFrame,
     for _, row2 in df_2mi.iterrows():
         uwi2 = row2["uwi"]
         matched = cohort_map.get(uwi2, [])
-        comp_df1 = df_1mi[df_1mi["uwi"].isin(matched)]
+        comp_df = df_1mi[df_1mi["uwi"].isin(matched)]
         medians = {
-            "eur_bbl":   comp_df1["eur_bbl"].median(),
-            "ip30_bpd":  comp_df1["ip30_bpd"].median(),
-            "ip90_bpd":  comp_df1["ip90_bpd"].median(),
-            "cum12_bbl": comp_df1["cum12_bbl"].median(),
-            "cum6_bbl":  comp_df1["cum6_bbl"].median(),
+            "eur_bbl":   comp_df["eur_bbl"].median(),
+            "ip90_bpd":  comp_df["ip90_bpd"].median(),
+            "sixm_bpd":  comp_df["sixm_bpd"].median(),
+            "twelvem_bpd": comp_df["twelvem_bpd"].median(),
         }
         eur_ratio = (row2["eur_bbl"] / medians["eur_bbl"]) if (np.isfinite(medians["eur_bbl"]) and medians["eur_bbl"] > 0) else np.nan
-        ip30_ratio = (row2["ip30_bpd"] / medians["ip30_bpd"]) if (np.isfinite(medians["ip30_bpd"]) and medians["ip30_bpd"] > 0) else np.nan
         ip90_ratio = (row2["ip90_bpd"] / medians["ip90_bpd"]) if (np.isfinite(medians["ip90_bpd"]) and medians["ip90_bpd"] > 0) else np.nan
-        cum12_ratio = (row2["cum12_bbl"] / medians["cum12_bbl"]) if (np.isfinite(medians["cum12_bbl"]) and medians["cum12_bbl"] > 0) else np.nan
-        cum6_ratio = (row2["cum6_bbl"] / medians["cum6_bbl"]) if (np.isfinite(medians["cum6_bbl"]) and medians["cum6_bbl"] > 0) else np.nan
+        sixm_ratio = (row2["sixm_bpd"] / medians["sixm_bpd"]) if (np.isfinite(medians["sixm_bpd"]) and medians["sixm_bpd"] > 0) else np.nan
+        twelvem_ratio = (row2["twelvem_bpd"] / medians["twelvem_bpd"]) if (np.isfinite(medians["twelvem_bpd"]) and medians["twelvem_bpd"] > 0) else np.nan
 
         rows.append({
             "uwi": uwi2,
             "eur_ratio": eur_ratio,
-            "ip30_ratio": ip30_ratio,
             "ip90_ratio": ip90_ratio,
-            "cum12_ratio": cum12_ratio,
-            "cum6_ratio": cum6_ratio
+            "sixm_ratio": sixm_ratio,
+            "twelvem_ratio": twelvem_ratio
         })
     return pd.DataFrame(rows)
 
@@ -680,8 +673,7 @@ def build_incremental_frame(df_2mile, df_1mile, cohort_map, metric_keys):
         comp_df  = df_1mile[df_1mile["uwi"].isin(matched)]
         rec      = compute_incremental(row2, comp_df, metric_keys)
         for col in ["section_name", "hz_length_m", "on_prod_date",
-                     "vintage_year", "eur_bbl", "ip30_bpd", "ip90_bpd",
-                     "cum6_bbl", "cum12_bbl",
+                     "vintage_year", "eur_bbl", "ip90_bpd", "sixm_bpd", "twelvem_bpd",
                      "waterflood_flag", "section_ooip"]:
             rec[col] = row2.get(col, np.nan)
         records.append(rec)
@@ -734,8 +726,7 @@ def main():
     st.title("🛢️ 2-Mile Uplift & Decline Analysis")
     st.caption(
         "Raw comparison: 2-mile wells are compared against 1-mile wells using "
-        "unscaled, direct raw metrics. EUR, IP30/IP90, 6-month cum and 12-month cum "
-        "uplifts are shown with baselines (1-mile) and actuals (2-mile)."
+        "unscaled, direct raw metrics. EUR, IP90, 6-month Cal. Rate and 12-month Cal. Rate uplifts are shown with baselines (1-mile) and actuals (2-mile)."
     )
 
     well_df, geoms = load_and_assemble_wells()
@@ -789,14 +780,13 @@ def main():
 
     ratio_df = compute_ratio_per_well_2mi_vs_1mi(df_2mile, df_1mile, cohort_map)
     gm_eur   = geometric_mean_of_series(ratio_df["eur_ratio"]) if not ratio_df.empty else np.nan
-    gm_ip30  = geometric_mean_of_series(ratio_df["ip30_ratio"]) if not ratio_df.empty else np.nan
     gm_ip90  = geometric_mean_of_series(ratio_df["ip90_ratio"]) if not ratio_df.empty else np.nan
-    gm_cum12 = geometric_mean_of_series(ratio_df["cum12_ratio"]) if not ratio_df.empty else np.nan
-    gm_cum6  = geometric_mean_of_series(ratio_df["cum6_ratio"]) if not ratio_df.empty else np.nan
+    gm_sixm  = geometric_mean_of_series(ratio_df["sixm_ratio"]) if not ratio_df.empty else np.nan
+    gm_twelvem = geometric_mean_of_series(ratio_df["twelvem_ratio"]) if not ratio_df.empty else np.nan
 
     decline_results, prod_err = fit_all_declines(B_FIXED, qi_override if (qi_override and qi_override > 0) else None)
     if prod_err:
-        st.warning(f"⚠️ Production data issue: {prod_err}. Decline fitting skipped — qi will fall back to IP30 from the well table.")
+        st.warning(f"⚠️ Production data issue: {prod_err}. Decline fitting skipped — qi will fall back to IP90 from the well table.")
 
     metric_keys = list(PERF_METRICS.keys())
 
@@ -838,9 +828,9 @@ def main():
             qi_source = (f"median of {len(fitted_qi_vals)} 2-mi wells — "
                           f"qi recipe: 0.5·peak + 0.25·prev + 0.25·next")
         else:
-            ip30_vals = df_2mile["ip30_bpd"].dropna().values
-            qi_anchor = float(np.median(ip30_vals)) if len(ip30_vals) > 0 else 150.0
-            qi_source = "fallback — median IP30 from well table"
+            ip90_vals = df_2mile["ip90_bpd"].dropna().values
+            qi_anchor = float(np.median(ip90_vals)) if len(ip90_vals) > 0 else 150.0
+            qi_source = "fallback — median IP90 from well table"
 
     pct_targets = {
         "P10": eur_summary["q10"], "P25": eur_summary["q25"],
@@ -872,16 +862,15 @@ def main():
         )
 
         st.subheader("Geometric Means of KPI Ratios (2mi / 1mi)")
-        gm_cols = st.columns(5)
+        gm_cols = st.columns(4)
         gm_cols[0].metric("EUR Ratio GM", f"{gm_eur:.3f}" if np.isfinite(gm_eur) else "—")
-        gm_cols[1].metric("IP30 Ratio GM", f"{gm_ip30:.3f}" if np.isfinite(gm_ip30) else "—")
-        gm_cols[2].metric("IP90 Ratio GM", f"{gm_ip90:.3f}" if np.isfinite(gm_ip90) else "—")
-        gm_cols[3].metric("1YCum Ratio GM", f"{gm_cum12:.3f}" if np.isfinite(gm_cum12) else "—")
-        gm_cols[4].metric("6MCum Ratio GM", f"{gm_cum6:.3f}" if np.isfinite(gm_cum6) else "—")
+        gm_cols[1].metric("IP90 Ratio GM", f"{gm_ip90:.3f}" if np.isfinite(gm_ip90) else "—")
+        gm_cols[2].metric("6M Cal. Rate GM", f"{gm_sixm:.3f}" if np.isfinite(gm_sixm) else "—")
+        gm_cols[3].metric("12M Cal. Rate GM", f"{gm_twelvem:.3f}" if np.isfinite(gm_twelvem) else "—")
 
         st.subheader("Per-Well KPI Ratios (2mi / median 1mi)")
         if not ratio_df.empty:
-            st.dataframe(ratio_df[["uwi", "eur_ratio", "ip30_ratio", "ip90_ratio", "cum12_ratio", "cum6_ratio"]],
+            st.dataframe(ratio_df[["uwi", "eur_ratio", "ip90_ratio", "sixm_ratio", "twelvem_ratio"]],
                          use_container_width=True, hide_index=True)
         else:
             st.info("No ratio data available.")
@@ -928,10 +917,10 @@ def main():
 
         st.subheader("Full Incremental Results")
         disp_cols = ["uwi", "section_name", "n_comparators",
-                     "eur_bbl", "eur_bbl_baseline", "eur_bbl_incremental",
-                     "eur_bbl_pct_uplift", "eur_bbl_ratio",
-                     "ip30_bpd", "ip30_bpd_incremental",
-                     "ip30_bpd_pct_uplift", "ip30_bpd_ratio",
+                     "eur_bbl", "sixm_bpd", "sixm_bpd_incremental",
+                     "sixm_bpd_pct_uplift", "sixm_bpd_ratio",
+                     "twelvem_bpd", "twelvem_bpd_incremental",
+                     "twelvem_bpd_pct_uplift", "twelvem_bpd_ratio",
                      "waterflood_flag", "vintage_year"]
         disp_cols = [c for c in disp_cols if c in incr_df.columns]
         st.dataframe(incr_df[disp_cols], use_container_width=True, hide_index=True)
@@ -1159,7 +1148,7 @@ def main():
                 "eur_bbl":              row.get("eur_bbl", np.nan),
                 "eur_Mbbl":             row.get("eur_bbl", np.nan) / 1000
                                          if pd.notna(row.get("eur_bbl")) else np.nan,
-                "ip30_bpd":             row.get("ip30_bpd", np.nan),
+                "ip90_bpd":             row.get("ip90_bpd", np.nan),
                 "hz_length_m":          row.get("hz_length_m", np.nan),
                 "n_comparators":        len(cohort_map.get(u, [])),
                 "has_decline_fit":      has_fit,
@@ -1170,9 +1159,25 @@ def main():
                                                     "eur_bbl_incremental"].values[0]
                     if (not incr_df.empty and "eur_bbl_incremental" in incr_df.columns
                         and u in incr_df["uwi"].values) else np.nan,
-                "eur_ratio_per_m":      incr_df.loc[incr_df["uwi"] == u,
-                                                    "eur_bbl_ratio"].values[0]
-                    if (not incr_df.empty and "eur_bbl_ratio" in incr_df.columns
+                "ip90_ratio":             incr_df.loc[incr_df["uwi"] == u,
+                                                    "ip90_bpd_ratio"].values[0]
+                    if (not incr_df.empty and "ip90_bpd_ratio" in incr_df.columns
+                        and u in incr_df["uwi"].values) else np.nan,
+                "sixm_bpd_incremental":  incr_df.loc[incr_df["uwi"] == u,
+                                                    "sixm_bpd_incremental"].values[0]
+                    if (not incr_df.empty and "sixm_bpd_incremental" in incr_df.columns
+                        and u in incr_df["uwi"].values) else np.nan,
+                "sixm_bpd_ratio":          incr_df.loc[incr_df["uwi"] == u,
+                                                    "sixm_bpd_ratio"].values[0]
+                    if (not incr_df.empty and "sixm_bpd_ratio" in incr_df.columns
+                        and u in incr_df["uwi"].values) else np.nan,
+                "twelvem_bpd_incremental": incr_df.loc[incr_df["uwi"] == u,
+                                                    "twelvem_bpd_incremental"].values[0]
+                    if (not incr_df.empty and "twelvem_bpd_incremental" in incr_df.columns
+                        and u in incr_df["uwi"].values) else np.nan,
+                "twelvem_bpd_ratio":         incr_df.loc[incr_df["uwi"] == u,
+                                                    "twelvem_bpd_ratio"].values[0]
+                    if (not incr_df.empty and "twelvem_bpd_ratio" in incr_df.columns
                         and u in incr_df["uwi"].values) else np.nan,
             })
         contrib_df = pd.DataFrame(contrib_rows)
