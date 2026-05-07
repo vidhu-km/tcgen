@@ -1066,29 +1066,6 @@ def main():
                 rows.append(row)
             st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-            st.subheader("Rate Overlay — RTC vs Derived")
-            fig_bench = go.Figure()
-            for label in ["P10","P25","P50","P75","P90"]:
-                c = final_curves.get(label)
-                if c is None: continue
-                fig_bench.add_trace(go.Scatter(
-                    x=c["t"], y=c["q"], mode="lines",
-                    line=dict(color=COLORS[label], width=3),
-                    name=f"Derived {label}",
-                ))
-            for i, rtc in enumerate(rtc_curves):
-                fig_bench.add_trace(go.Scatter(
-                    x=rtc["t"], y=rtc["q"], mode="lines",
-                    line=dict(color=RTC_PALETTE[i % len(RTC_PALETTE)],
-                               width=2, dash="dash"),
-                    name=f"RTC: {rtc['name']}",
-                ))
-            fig_bench.update_layout(**PLOTLY_LAYOUT, height=550,
-                                    xaxis_title="Days",
-                                    yaxis_title="Rate (bbl/d)",
-                                    title="Derived vs RTC — q(t)")
-            st.plotly_chart(fig_bench, use_container_width=True)
-
             st.subheader("EUR Bar — RTC vs Derived")
             fig_eurbar = go.Figure()
             cats, vals, cols = [], [], []
