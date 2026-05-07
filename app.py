@@ -735,7 +735,7 @@ def main():
     rtc_curves = load_rtc_curves()
 
     st.sidebar.title("⚙️ Configuration")
-    qi_override = st.sidebar.number_input("Override qi (bbl/d) for type curves (0 = auto)", min_value=0.0, value=0.0, step=1.0)
+    qi_override = st.sidebar.number_input("Override qi (bbl/d) for type curves (0 = auto)", min_value=0.0, value=125.0, step=1.0)
 
     analysis_mode = st.sidebar.radio(
         "Analog Matching Mode",
