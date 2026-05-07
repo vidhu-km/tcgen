@@ -1040,9 +1040,8 @@ def main():
         else:
             st.warning("No EUR distribution data available.")
 
-        # Move RTC summary and charts into Type Curves tab
         if rtc_curves:
-            st.subheader("RTC Benchmarking Summary (moved from RTC tab)")
+            st.subheader("RTC Benchmarking Summary")
             rows = []
             for rtc in rtc_curves:
                 row = {
