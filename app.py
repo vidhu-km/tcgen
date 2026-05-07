@@ -937,27 +937,6 @@ def main():
         c0[4].metric("b (fixed)", f"{B_FIXED:.2f}")
         c0[5].metric("Prod fits", len(fitted_wells))
 
-        st.subheader("Curve Parameters")
-        param_rows = []
-        for label in ["P10", "P25", "P50", "P75", "P90"]:
-            c = final_curves.get(label)
-            if c is None:
-                param_rows.append({"Curve": label, "qi (bbl/d)": "—",
-                                    "Di (1/d)": "—", "Di (1/yr)": "—",
-                                    "b": "—", "EUR tgt (Mbbl)": "—",
-                                    "EUR solved (Mbbl)": "—"})
-            else:
-                param_rows.append({
-                    "Curve": label,
-                    "qi (bbl/d)":         f"{c['qi']:,.1f}",
-                    "Di (1/d)":           f"{c['di']:.6f}",
-                    "Di (1/yr)":          f"{c['di'] * 365.25:.4f}",
-                    "b":                  f"{c['b']:.2f}",
-                    "EUR tgt (Mbbl)":     f"{c['eur_target_bbl'] / 1000:,.1f}",
-                    "EUR solved (Mbbl)":  f"{c['eur_actual_bbl'] / 1000:,.1f}",
-                })
-        st.dataframe(pd.DataFrame(param_rows), use_container_width=True, hide_index=True)
-
         st.subheader("Rate Type Curves — q(t)")
         fig_rate = go.Figure()
         for label in ["P10","P25","P50","P75","P90"]:
