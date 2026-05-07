@@ -1013,32 +1013,7 @@ def main():
         fig_cum.update_yaxes(rangemode="tozero")
         st.plotly_chart(fig_cum, use_container_width=True)
 
-        st.subheader("EUR Distribution Context")
-        if len(eur_dist) > 0:
-            fig_eur = go.Figure()
-            fig_eur.add_trace(go.Box(
-                y=eur_dist / 1000, name="Derived EUR (Mbbl)",
-                boxpoints="all", jitter=0.5, pointpos=0,
-                marker=dict(color=COLORS["2-Mile"], size=9),
-                line=dict(color="#e67e22"),
-                fillcolor="rgba(255,127,14,0.2)", boxmean=True,
-            ))
-            for label in ["P10", "P25", "P50", "P75", "P90"]:
-                val = pct_targets.get(label)
-                if np.isfinite(val):
-                    fig_eur.add_hline(
-                        y=val / 1000, line_dash="dash",
-                        line_color=COLORS[label], line_width=2,
-                        annotation_text=f"{label}: {val/1000:,.0f} Mbbl",
-                        annotation_position="top right")
-            fig_eur.update_layout(
-                **PLOTLY_LAYOUT, height=420,
-                title=f"EUR Distribution (n={len(eur_dist)}, source: {eur_source})",
-                yaxis_title="EUR (Mbbl)",
-            )
-            st.plotly_chart(fig_eur, use_container_width=True)
-        else:
-            st.warning("No EUR distribution data available.")
+    
 
         if rtc_curves:
             st.subheader("RTC Benchmarking Summary")
