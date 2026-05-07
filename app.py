@@ -1087,32 +1087,6 @@ def main():
                                      title="EUR Comparison")
             st.plotly_chart(fig_eurbar, use_container_width=True)
 
-        # Traceability & Contributing Wells (moved from Export tab)
-        st.subheader("Traceability")
-        trace_rows = []
-        for label in ["P10","P25","P50","P75","P90"]:
-            c = final_curves.get(label)
-            trace_rows.append({
-                "Curve": label,
-                "EUR target (Mbbl)": c["eur_target_bbl"]/1000 if c is not None else None,
-                "EUR solved (Mbbl)": c["eur_actual_bbl"]/1000 if c is not None else None,
-            })
-        trace_df = pd.DataFrame(trace_rows)
-
-        curve_data_frames = {}
-        for label in ["P10", "P25", "P50", "P75", "P90"]:
-            c = final_curves.get(label)
-            if c is None: continue
-            cdf = pd.DataFrame({
-                "day":        c["t"],
-                "rate_bpd":   c["q"],
-                "cum_bbl":    c["N"],
-                "cum_Mbbl":   c["N"] / 1000,
-            })
-            cdf.insert(0, "curve", label)
-            curve_data_frames[label] = cdf
-
-        st.dataframe(trace_df, use_container_width=True, hide_index=True)
 
         st.subheader("Contributing Wells")
         contrib_rows = []
