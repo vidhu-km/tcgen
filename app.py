@@ -1087,6 +1087,19 @@ def main():
                                      title="EUR Comparison")
             st.plotly_chart(fig_eurbar, use_container_width=True)
 
+        curve_data_frames = {}
+        for label in ["P10", "P25", "P50", "P75", "P90"]:
+            c = final_curves.get(label)
+            if c is None: continue
+            cdf = pd.DataFrame({
+                "day":        c["t"],
+                "rate_bpd":   c["q"],
+                "cum_bbl":    c["N"],
+                "cum_Mbbl":   c["N"] / 1000,
+            })
+            cdf.insert(0, "curve", label)
+            curve_data_frames[label] = cdf
+
 
         st.subheader("Contributing Wells")
         contrib_rows = []
