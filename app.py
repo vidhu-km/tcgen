@@ -1182,7 +1182,6 @@ def main():
             })
         contrib_df = pd.DataFrame(contrib_rows)
 
-        st.subheader("Contributing Wells — Details")
         st.dataframe(contrib_df, use_container_width=True, hide_index=True)
 
         buf = io.BytesIO()
