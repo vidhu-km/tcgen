@@ -861,7 +861,7 @@ def main():
             f"{sum(len(v) for v in cohort_map.values())} cohort links"
         )
 
-        st.subheader("Geometric Means of KPI Ratios (2mi / 1mi)")
+        st.subheader("KPI Ratios (2mi / 1mi)")
         gm_cols = st.columns(4)
         gm_cols[0].metric("EUR Ratio GM", f"{gm_eur:.3f}" if np.isfinite(gm_eur) else "—")
         gm_cols[1].metric("IP90 Ratio GM", f"{gm_ip90:.3f}" if np.isfinite(gm_ip90) else "—")
