@@ -569,9 +569,12 @@ def load_and_assemble_wells():
     return well_df, geoms
 
 
-def make_density_plot_with_percentiles(data_1m, data_2m, title, xaxis_title,
-                                       percentiles_to_show=(10, 25, 50, 75, 90)):
-    """Create a KDE density plot for 1M and 2M data with percentile vertical lines."""
+def make_density_plot_with_percentiles(
+    data_1m, data_2m, title, xaxis_title,
+    percentiles_to_show=(10, 25, 50, 75, 90)
+):
+    """Create a KDE density plot for 1M and 2M data with percentile vertical lines
+    and enhanced tooltips (n, min/max/mean, percentiles)."""
     fig = go.Figure()
 
     datasets = [
@@ -584,30 +587,39 @@ def make_density_plot_with_percentiles(data_1m, data_2m, title, xaxis_title,
         if len(vals) < 3:
             continue
 
-        # Compute KDE
+        # KDE
         kde = gaussian_kde(vals, bw_method="scott")
         x_min, x_max = vals.min() * 0.8, vals.max() * 1.2
         x_grid = np.linspace(x_min, x_max, 300)
         y_grid = kde(x_grid)
+        # Normalize density for nicer comparison
         y_grid = y_grid / y_grid.max()
 
-        # Build hover text with percentile info
+        # Summary stats
+        n_vals = len(vals)
+        min_v  = float(vals.min())
+        max_v  = float(vals.max())
+        mean_v = float(vals.mean())
         pcts = {p: float(np.percentile(vals, p)) for p in percentiles_to_show}
-        pct_text = " | ".join([f"P{p}={pcts[p]:,.0f}" for p in percentiles_to_show])
+        ptxt = " | ".join([f"P{p}={pcts[p]:,.0f}" for p in percentiles_to_show])
+        # Build hover text with summary data embedded in the tooltip
+        hover_text = (
+            f"<b>{label}</b><br>"
+            f"{xaxis_title}: %{{x:,.0f}}<br>"
+            f"Density: %{{y:.6f}}<br>"
+            f"n={n_vals} | Min={min_v:,.0f} | Max={max_v:,.0f} | Mean={mean_v:,.0f}<br>"
+            f"{ptxt}<br>"
+            f"<extra></extra>"
+        )
 
         fig.add_trace(go.Scatter(
-            x=x_grid, y=y_grid, mode="lines", name=f"{label} (n={len(vals)})",
+            x=x_grid, y=y_grid, mode="lines", name=f"{label} (n={n_vals})",
             line=dict(color=color, width=2.5),
-            fill="tozeroy", opacity=0.3,
-            hovertemplate=(
-                f"<b>{label}</b><br>"
-                f"{xaxis_title}: %{{x:,.0f}}<br>"
-                f"Density: %{{y:.6f}}<br>"
-                f"<extra>{pct_text}</extra>"
-            ),
+            fill="tozeroy", opacity=0.25,
+            hovertemplate=hover_text
         ))
 
-        # Add percentile vlines
+        # Add percentile vertical lines with lightweight hover
         for p in percentiles_to_show:
             pval = pcts[p]
             y_at_p = float(kde(np.array([pval]))[0])
