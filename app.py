@@ -589,6 +589,7 @@ def make_density_plot_with_percentiles(data_1m, data_2m, title, xaxis_title,
         x_min, x_max = vals.min() * 0.8, vals.max() * 1.2
         x_grid = np.linspace(x_min, x_max, 300)
         y_grid = kde(x_grid)
+        y_grid = y_grid / y_grid.max()
 
         # Build hover text with percentile info
         pcts = {p: float(np.percentile(vals, p)) for p in percentiles_to_show}
