@@ -642,7 +642,6 @@ def make_density_plot(data_1m, data_2m, title, xaxis_title,
             hovertemplate=(
                 f"<b>{label}</b><br>"
                 f"{xaxis_title}: %{{x:,.0f}}<br>"
-                f"Density: %{{y:.4f}}<br>"
                 f"n={n} | Mean={vals.mean():,.0f}<br>"
                 f"{ptxt}<extra></extra>"
             ),
