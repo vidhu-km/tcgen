@@ -649,106 +649,79 @@ def make_density_plot_with_percentiles(
     return fig
 
 
-def make_smoothed_ecdf_plot(data_1m, data_2m, title, xaxis_title):
+def smoothed_ecdf_plot(data_1m, data_2m, title, xaxis_title):
     """
-    Create a smoothed ECDF plot (monotone) for 1-Mile and 2-Mile data using a PCHIP interpolant
-    built on strictly increasing (unique) ECDF points. Handles duplicates in the data.
+    Create a non-smoothed ECDF plot (unsmoothed, using raw data) for 1-Mile and 2-Mile
+    and add percentile markers at P10, P25, P50, P75, P90 on both curves.
     """
 
-    def _ecdf_points(data):
-        vals = np.array([v for v in data if np.isfinite(v)], dtype=float)
-        if len(vals) == 0:
-            return None, None, None
+    def _finite_vals(data):
+        return np.array([v for v in data if np.isfinite(v)], dtype=float)
 
+    def _ecdf_from_vals(vals):
+        # vals should be a 1D array of finite values
         vals_sorted = np.sort(vals)
-        n = len(vals_sorted)
+        n = vals_sorted.size
+        if n == 0:
+            return None, None
+        x = vals_sorted
+        y = np.arange(1, n + 1, dtype=float) / float(n)
+        return x, y
 
-        # Build ECDF at unique x-values (collapse duplicates)
-        x_unique = []
-        y_ecdf = []
-        i = 0
-        while i < n:
-            v = vals_sorted[i]
-            j = i
-            # move to the last index where value == v
-            while j + 1 < n and vals_sorted[j + 1] == v:
-                j += 1
-            x_unique.append(v)
-            # ECDF value at the last occurrence of v
-            y_ecdf.append((j + 1) / n)
-            i = j + 1
+    # Prepare raw data (no smoothing)
+    vals1 = _finite_vals(data_1m)
+    vals2 = _finite_vals(data_2m)
 
-        x_unique = np.asarray(x_unique)
-        y_ecdf = np.asarray(y_ecdf)
+    x1, y1 = _ecdf_from_vals(vals1) if vals1.size > 0 else (None, None)
+    x2, y2 = _ecdf_from_vals(vals2) if vals2.size > 0 else (None, None)
 
-        # If we have fewer than 2 unique points, provide a safe fallback interpolator
-        if x_unique.size < 2:
-            min_v = x_unique[0]
-            max_v = x_unique[-1]
-
-            def interp_fallback(xgrid):
-                if max_v == min_v:
-                    # All data equal: jump from 0 to 1 at min_v (approximate)
-                    return np.where(xgrid < min_v, 0.0, 1.0)
-                # Simple linear ramp between min and max
-                return np.clip((xgrid - min_v) / (max_v - min_v), 0.0, 1.0)
-
-            return x_unique, y_ecdf, interp_fallback
-
-        # Normal case: at least 2 unique points, use PCHIP on the unique points
-        interp = PchipInterpolator(x_unique, y_ecdf)
-        return x_unique, y_ecdf, interp
-
-    def _safe_eval(interp, xgrid, fallback=None):
-        if interp is None:
-            if callable(fallback):
-                return fallback(xgrid)
-            else:
-                return None
-        return interp(xgrid)
-
-    # Build data for both datasets
-    x1, y1, interp1 = _ecdf_points(data_1m)
-    x2, y2, interp2 = _ecdf_points(data_2m)
-
-    if interp1 is None and interp2 is None:
-        fig = go.Figure()
-        fig.update_layout(**PLOTLY_LAYOUT, height=350, title=title,
-                          xaxis_title=xaxis_title, yaxis_title="ECDF",
-                          hovermode="closest")
-        return fig
-
-    # Determine x grid domain
-    xmin = None
-    xmax = None
-    if x1 is not None and x2 is not None:
-        xmin = min(x1[0], x2[0])
-        xmax = max(x1[-1], x2[-1])
-    elif x1 is not None:
-        xmin, xmax = x1[0], x1[-1]
-    elif x2 is not None:
-        xmin, xmax = x2[0], x2[-1]
-
-    if xmin is None or xmax is None:
-        xmin, xmax = 0.0, 1.0  # fallback
-
-    xgrid = np.linspace(xmin, xmax, 300)
     fig = go.Figure()
 
-    if interp1 is not None:
-        ygrid1 = interp1(xgrid) if callable(interp1) else interp1(xgrid)
+    # 1-Mile ECDF (unsmoothed)
+    if x1 is not None:
         fig.add_trace(go.Scatter(
-            x=xgrid, y=ygrid1, mode="lines",
-            name="1-Mile ECDF (smoothed)",
-            line=dict(color=COLORS["1-Mile"], width=2)
+            x=x1, y=y1, mode="lines",
+            name="1-Mile ECDF (unsmoothed)",
+            line=dict(color=COLORS["1-Mile"], width=2),
         ))
-    if interp2 is not None:
-        ygrid2 = interp2(xgrid) if callable(interp2) else interp2(xgrid)
+
+    # 2-Mile ECDF (unsmoothed)
+    if x2 is not None:
         fig.add_trace(go.Scatter(
-            x=xgrid, y=ygrid2, mode="lines",
-            name="2-Mile ECDF (smoothed)",
-            line=dict(color=COLORS["2-Mile"], width=2)
+            x=x2, y=y2, mode="lines",
+            name="2-Mile ECDF (unsmoothed)",
+            line=dict(color=COLORS["2-Mile"], width=2),
         ))
+
+    # Percentile markers (P10, P25, P50, P75, P90) for both datasets
+    percentiles_to_show = (10, 25, 50, 75, 90)
+
+    # Helper to add markers for a given dataset
+    def _add_percentile_markers(vals, color, label_prefix=""):
+        if vals is None or vals.size == 0:
+            return
+        for p in percentiles_to_show:
+            pval = float(np.percentile(vals, p))
+            # ECDF value at pval
+            y_at_p = float(np.mean(vals <= pval))
+            # Vertical marker
+            fig.add_trace(go.Scatter(
+                x=[pval, pval], y=[0.0, y_at_p],
+                mode="lines",
+                line=dict(color=color, width=1, dash="dot"),
+                showlegend=False,
+                hovertemplate=f"{label_prefix} P{p} = {pval:,.0f}<extra></extra>",
+            ))
+            # Annotation near the marker
+            fig.add_annotation(
+                x=pval, y=y_at_p,
+                text=f"P{p}", showarrow=False,
+                font=dict(size=9, color=color),
+                yshift=10,
+            )
+
+    _add_percentile_markers(vals1, COLORS["P10"], label_prefix="1-Mile")
+    _add_percentile_markers(vals2, COLORS["P25"], label_prefix="2-Mile")
 
     fig.update_layout(
         **PLOTLY_LAYOUT, height=350,
@@ -953,16 +926,16 @@ def main():
             )
             st.plotly_chart(fig_ip90_dist, use_container_width=True)
 
-        # Smoothed ECDFs: add right under the distribution plots
-        st.subheader("Smoothed ECDF — EUR (1-Mile vs 2-Mile)")
-        ecdf_eur = make_smoothed_ecdf_plot(eur_1m_vals, eur_2m_vals,
-                                           title="Smoothed ECDF — EUR",
+
+        st.subheader("ECDF — EUR (1-Mile vs 2-Mile)")
+        ecdf_eur = smoothed_ecdf_plot(eur_1m_vals, eur_2m_vals,
+                                           title="ECDF — EUR",
                                            xaxis_title="EUR (bbl)")
         st.plotly_chart(ecdf_eur, use_container_width=True)
 
-        st.subheader("Smoothed ECDF — IP90 (1-Mile vs 2-Mile)")
-        ecdf_ip90 = make_smoothed_ecdf_plot(ip90_1m_vals, ip90_2m_vals_all,
-                                            title="Smoothed ECDF — IP90",
+        st.subheader("ECDF — IP90 (1-Mile vs 2-Mile)")
+        ecdf_ip90 = smoothed_ecdf_plot(ip90_1m_vals, ip90_2m_vals_all,
+                                            title="ECDF — IP90",
                                             xaxis_title="IP90 (bbl/d)")
         st.plotly_chart(ecdf_ip90, use_container_width=True)
 
