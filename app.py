@@ -1,3 +1,10 @@
+"""
+2-Mile Well Uplift & Decline Analysis — Streamlit App
+=====================================================
+Compare 2-mile wells against 1-mile analogs to quantify uplift,
+then build custom type curves that reflect expected 2-mile performance.
+"""
+
 import io
 import math
 import os
@@ -29,7 +36,7 @@ RTC_XLSX_PATH = "rtc.xlsx"
 
 # ──────────────────────────── constants ───────────────────────────────
 
-TARGET_METRICS_CRS = "EPSG:26913"
+TARGET_METRIC_CRS = "EPSG:26913"
 WATERFLOOD_BUFFER_M = 200.0
 CORRIDOR_HALF_WIDTH_M = 900.0
 
@@ -293,7 +300,7 @@ def load_geometries():
         gdf = gdf.set_crs("EPSG:4326")
 
     try:
-        gdf = gdf.to_crs(TARGET_METRS_CRS)
+        gdf = gdf.to_crs(TARGET_METRIC_CRS)
     except Exception:
         union_geom = gdf.geometry.union_all()
         c = union_geom.centroid
@@ -877,20 +884,8 @@ def main():
             "Use the distributions below to understand the range of 1-mile "
             "and 2-mile performance, then build a custom type curve by "
             "selecting a percentile for **IP90** (sets qi) and **EUR** "
-            "(sets the decline). Percentiles reference the **2-mile** "
-            "distributions. Oil & gas convention: P10 = optimistic."
+            "(sets the decline)."
         )
-
-        # Ensure a place to store multiple user-defined curves
-        if "curve_specs" not in st.session_state:
-            st.session_state.curve_specs = []
-
-        # Quick UI: actions to manage multiple curves
-        action_cols = st.columns([1, 1])
-        with action_cols[0]:
-            add_curve_btn = st.button("Add current curve to list", key="add_curve_btn")
-        with action_cols[1]:
-            clear_curves_btn = st.button("Clear all curves", key="clear_curves_btn")
 
         # ── distributions ─────────────────────────────────────────────
         st.subheader("Performance Distributions — 1-Mile vs 2-Mile")
@@ -944,8 +939,6 @@ def main():
 
         # ── curve builder ─────────────────────────────────────────────
         st.subheader("🔧 Build Your Type Curve")
-
-        # Show current selection controls
         st.markdown(
             "Select a percentile for **IP90** (determines qi) and **EUR** "
             "(determines decline). Percentiles reference the **2-mile** "
@@ -1000,40 +993,24 @@ def main():
             else:
                 st.info("Enter valid percentiles to generate a curve.")
 
-        # ── rate plot & cumulative plot (support multiple user curves) ──
-        # Plot all added curves if any, otherwise fall back to single current curve
+        # ── rate plot ─────────────────────────────────────────────────
+        st.subheader("Rate Type Curve — q(t)")
         fig_rate = go.Figure()
 
-        curves_to_plot = st.session_state.curve_specs if st.session_state.curve_specs else []
-        if not curves_to_plot:
-            # No extra curves: plot the current single curve
-            if user_curve is not None:
-                fig_rate.add_trace(go.Scatter(
-                    x=user_curve["t"], y=user_curve["q"], mode="lines",
-                    line=dict(color="#e74c3c", width=3.0),
-                    name=(f"Your Curve — IP90 P{ip90_pct} / EUR P{eur_pct}"
-                          f" (qi={qi_val:,.0f}, EUR={eur_val / 1000:,.0f} Mbbl)"),
-                    hovertemplate=(
-                        "Your Curve<br>Day %{x:,.0f}<br>"
-                        "%{y:,.1f} bbl/d<extra></extra>"
-                    ),
-                ))
-        else:
-            for idx, cs in enumerate(curves_to_plot):
-                c = cs["curve"]
-                color = RTC_PALETTE[idx % len(RTC_PALETTE)]
-                qi_show = cs["qi"]
-                eur_show = cs["eur"]
-                fig_rate.add_trace(go.Scatter(
-                    x=c["t"], y=c["q"], mode="lines",
-                    line=dict(color=color, width=2),
-                    name=f"Your Curve {idx+1} — qi={qi_show:,.0f}, EUR={eur_show/1000:,.0f} Mbbl",
-                    hovertemplate=(
-                        f"Your Curve {idx+1}<br>Day %{{x:,.0f}}<br>%{{y:,.1f}} bbl/d<extra></extra>"
-                    ),
-                ))
+        if user_curve is not None:
+            fig_rate.add_trace(go.Scatter(
+                x=user_curve["t"], y=user_curve["q"], mode="lines",
+                line=dict(color="#e74c3c", width=3.5),
+                name=(
+                    f"Your Curve — P{ip90_pct} IP90 / P{eur_pct} EUR "
+                    f"(qi={qi_val:,.0f}, EUR={eur_val / 1000:,.0f} Mbbl)"
+                ),
+                hovertemplate=(
+                    "Your Curve<br>Day %{x:,.0f}<br>"
+                    "%{y:,.1f} bbl/d<extra></extra>"
+                ),
+            ))
 
-        # RTC curves
         for i, rtc in enumerate(rtc_curves):
             fig_rate.add_trace(go.Scatter(
                 x=rtc["t"], y=rtc["q"], mode="lines",
@@ -1067,29 +1044,16 @@ def main():
         st.subheader("Cumulative Type Curve — N(t)")
         fig_cum = go.Figure()
 
-        if not curves_to_plot:
-            if user_curve is not None:
-                fig_cum.add_trace(go.Scatter(
-                    x=user_curve["t"], y=user_curve["N"] / 1000, mode="lines",
-                    line=dict(color="#e74c3c", width=3.5),
-                    name=f"Your Curve — EUR={eur_val / 1000:,.0f} Mbbl",
-                    hovertemplate=(
-                        "Your Curve<br>Day %{x:,.0f}<br>"
-                        "%{y:,.1f} Mbbl<extra></extra>"
-                    ),
-                ))
-        else:
-            for idx, cs in enumerate(curves_to_plot):
-                c = cs["curve"]
-                color = RTC_PALETTE[idx % len(RTC_PALETTE)]
-                fig_cum.add_trace(go.Scatter(
-                    x=c["t"], y=c["N"] / 1000, mode="lines",
-                    line=dict(color=color, width=2),
-                    name=f"Your Curve {idx+1} — EUR={cs['eur']/1000:,.0f} Mbbl",
-                    hovertemplate=(
-                        f"Your Curve {idx+1}<br>Day %{{x:,.0f}}<br>%{{y:,.1f}} Mbbl<extra></extra>"
-                    ),
-                ))
+        if user_curve is not None:
+            fig_cum.add_trace(go.Scatter(
+                x=user_curve["t"], y=user_curve["N"] / 1000, mode="lines",
+                line=dict(color="#e74c3c", width=3.5),
+                name=f"Your Curve — EUR={user_curve['eur_actual_bbl'] / 1000:,.0f} Mbbl",
+                hovertemplate=(
+                    "Your Curve<br>Day %{x:,.0f}<br>"
+                    "%{y:,.1f} Mbbl<extra></extra>"
+                ),
+            ))
 
         for i, rtc in enumerate(rtc_curves):
             fig_cum.add_trace(go.Scatter(
@@ -1113,42 +1077,65 @@ def main():
         st.plotly_chart(fig_cum, use_container_width=True)
 
         # ── RTC benchmarking ──────────────────────────────────────────
-        if rtc_curves and (not curves_to_plot):
+        if rtc_curves and user_curve is not None:
             st.subheader("RTC Benchmarking Summary")
             bench = []
             for rtc in rtc_curves:
-                d_abs = (0.0)  # placeholder; keep structure if needed
-                d_abs = (0.0)  # in case you want to compute based on your curve later
+                d_abs = (user_curve["eur_actual_bbl"]
+                         - rtc["eur_actual_bbl"]) / 1000
                 d_pct = (
-                    (0.0)  # placeholder
-                    if rtc["eur_actual_bbl"] == 0 else np.nan
+                    (user_curve["eur_actual_bbl"] - rtc["eur_actual_bbl"])
+                    / rtc["eur_actual_bbl"] * 100
+                    if rtc["eur_actual_bbl"] else np.nan
                 )
-                qi_r = (0.0) if 0 else np.nan
+                qi_r = (user_curve["qi"] / rtc["qi"]
+                        if rtc["qi"] > 0 else np.nan)
                 bench.append({
                     "RTC Name": rtc["name"],
                     "RTC qi (bbl/d)": round(rtc["qi"], 1),
                     "RTC EUR (Mbbl)": round(rtc["eur_actual_bbl"] / 1000, 1),
                     "RTC b": round(rtc["b"], 2),
-                    "Your qi (bbl/d)": None,
-                    "Your EUR (Mbbl)": None,
-                    "ΔEUR (Mbbl)": f"{0:+.1f}",
-                    "ΔEUR (%)": "—",
-                    "qi Ratio": "—",
+                    "Your qi (bbl/d)": round(user_curve["qi"], 1),
+                    "Your EUR (Mbbl)": round(
+                        user_curve["eur_actual_bbl"] / 1000, 1),
+                    "ΔEUR (Mbbl)": f"{d_abs:+,.1f}",
+                    "ΔEUR (%)": (f"{d_pct:+.1f}%"
+                                 if np.isfinite(d_pct) else "—"),
+                    "qi Ratio": (f"{qi_r:.2f}"
+                                 if np.isfinite(qi_r) else "—"),
                 })
-            # When adding more curves, you could compute actual deltas vs curves
-            # For now, keep a placeholder to avoid breaking layout
             st.dataframe(pd.DataFrame(bench), use_container_width=True,
                          hide_index=True)
+
+            # EUR bar comparison
+            st.subheader("EUR Bar — RTC vs Your Curve")
+            fig_bar = go.Figure()
+            cats, bar_vals, bar_cols = [], [], []
+            for i, rtc in enumerate(rtc_curves):
+                cats.append(f"RTC: {rtc['name']}")
+                bar_vals.append(rtc["eur_actual_bbl"] / 1000)
+                bar_cols.append(RTC_PALETTE[i % len(RTC_PALETTE)])
+            cats.append(f"Your Curve (P{ip90_pct}/P{eur_pct})")
+            bar_vals.append(user_curve["eur_actual_bbl"] / 1000)
+            bar_cols.append("#e74c3c")
+            fig_bar.add_trace(go.Bar(
+                x=cats, y=bar_vals, marker_color=bar_cols,
+                text=[f"{v:,.0f}" for v in bar_vals],
+                textposition="outside",
+            ))
+            fig_bar.update_layout(
+                **PLOTLY_LAYOUT, height=400,
+                yaxis_title="EUR (Mbbl)",
+                title="EUR Comparison", hovermode="closest",
+            )
+            st.plotly_chart(fig_bar, use_container_width=True)
 
         # ── export ────────────────────────────────────────────────────
         st.divider()
         st.subheader("📥 Export")
 
-        # Determine whether we should export a single-curve data or multiple curves
         curve_df = None
-        single_curve_only = (len(getattr(st.session_state, "curve_specs", [])) == 0)
-
-        if single_curve_only and (user_curve is not None):
+        if user_curve is not None:
             curve_df = pd.DataFrame({
                 "day": user_curve["t"],
                 "rate_bpd": user_curve["q"],
@@ -1158,9 +1145,7 @@ def main():
 
         buf = io.BytesIO()
         with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
-            # If there is exactly one curve stored as a current "user curve" (no extra curves),
-            # export its data as before.
-            if single_curve_only and curve_df is not None:
+            if user_curve is not None and curve_df is not None:
                 pd.DataFrame([{
                     "qi_bpd": user_curve["qi"],
                     "di_per_day": user_curve["di"],
@@ -1175,20 +1160,6 @@ def main():
                 }]).to_excel(writer, index=False, sheet_name="Curve_Parameters")
                 curve_df.to_excel(writer, index=False,
                                   sheet_name="Curve_Data")
-
-            # Export all added curves specs if any exist
-            curve_specs = getattr(st.session_state, "curve_specs", [])
-            if curve_specs:
-                specs_rows = [{
-                    "curve_index": i + 1,
-                    "qi": cs["qi"],
-                    "eur": cs["eur"],
-                    "ip90_pct": cs["ip90_pct"],
-                    "eur_pct": cs["eur_pct"],
-                } for i, cs in enumerate(curve_specs)]
-                pd.DataFrame(specs_rows).to_excel(
-                    writer, index=False, sheet_name="Curve_Specs_List"
-                )
 
             if not incr_df.empty:
                 incr_df.to_excel(writer, index=False,
@@ -1232,48 +1203,6 @@ def main():
                 file_name="2mile_type_curve.csv",
                 mime="text/csv",
             )
-
-        # Show the current list of added curves (UI)
-        if st.session_state.curve_specs:
-            st.subheader("Curves in List")
-            spec_rows = []
-            for idx, cs in enumerate(st.session_state.curve_specs):
-                spec_rows.append({
-                    "Index": idx + 1,
-                    "qi (bbl/d)": f"{cs['qi']:,.0f}",
-                    "EUR (bbl)": f"{cs['eur']:,.0f}",
-                    "IP90 %": cs["ip90_pct"],
-                    "EUR %": cs["eur_pct"],
-                })
-            st.table(pd.DataFrame(spec_rows))
-
-        # If user clears the list, reset and inform
-        if clear_curves_btn:
-            st.session_state.curve_specs = []
-            st.success("Cleared all added curves.")
-
-        # If user added a new curve, inform
-        if add_curve_btn and user_curve is not None:
-            # We show a brief status; actual append happens above after click in logic
-            pass
-
-        # Handle the actual appending of curves to state (after computing current UI state)
-        if "add_curve_btn" in locals() and add_curve_btn:
-            # Append only if current qi/eur are valid and a curve exists
-            if qi_val > 0 and eur_val > 0 and user_curve is not None:
-                st.session_state.curve_specs.append({
-                    "qi": qi_val,
-                    "eur": eur_val,
-                    "ip90_pct": int(ip90_pct),
-                    "eur_pct": int(eur_pct),
-                    "curve": user_curve
-                })
-                st.success("Current curve added to list.")
-            else:
-                st.warning("Cannot add curve: ensure valid IP90 and EUR percentiles.")
-
-        # Note: The actual append is performed above in the dedicated block
-        # to ensure we only add on explicit user action.
 
 
 if __name__ == "__main__":
