@@ -67,6 +67,18 @@ RTC_PALETTE = [
     "#2980b9", "#7f8c8d", "#d35400", "#27ae60",
 ]
 
+# Oil & gas convention helpers
+# P10 is optimistic; P90 is conservative.
+# Inversion mapping: when a user selects percentile p_label (10,25,50,75,90),
+# we actually compute/use the data's percentile at eff_p = 100 - p_label.
+PCT_TO_X = {
+    10: 90,
+    25: 75,
+    50: 50,
+    75: 25,
+    90: 10,
+}
+
 
 def _std_uwi(s: pd.Series) -> pd.Series:
     return (
@@ -572,7 +584,7 @@ def load_and_assemble_wells():
 
 def make_density_plot_with_percentiles(
     data_1m, data_2m, title, xaxis_title,
-    percentiles_to_show=(90, 75, 50, 25, 10)
+    percentiles_to_show=(10,25,50,75,90)
 ):
     """Create a KDE density plot for 1M and 2M data with percentile vertical lines
     and enhanced tooltips (n, min/max/mean, percentiles)."""
@@ -596,14 +608,20 @@ def make_density_plot_with_percentiles(
         # Normalize density for nicer comparison
         y_grid = y_grid / y_grid.max()
 
-        # Summary stats
+        # Compute percentiles with oil&gas convention (inverted)
+        p_eff_vals = {}
+        for p in percentiles_to_show:
+            eff_p = PCT_TO_X.get(p, p)  # use inverted percentile for x
+            p_eff_vals[p] = float(np.percentile(vals, eff_p))
+
+        # p_text shows the actual values used for labeling, in oil&gas terms
+        ptxt = " | ".join([f"P{p}={p_eff_vals[p]:,.0f}" for p in percentiles_to_show])
+        # Build hover text with summary data embedded in the tooltip
         n_vals = len(vals)
         min_v  = float(vals.min())
         max_v  = float(vals.max())
         mean_v = float(vals.mean())
-        pcts = {p: float(np.percentile(vals, p)) for p in percentiles_to_show}
-        ptxt = " | ".join([f"P{p}={pcts[p]:,.0f}" for p in percentiles_to_show])
-        # Build hover text with summary data embedded in the tooltip
+
         hover_text = (
             f"<b>{label}</b><br>"
             f"{xaxis_title}: %{{x:,.0f}}<br>"
@@ -622,7 +640,7 @@ def make_density_plot_with_percentiles(
 
         # Add percentile vertical lines with lightweight hover
         for p in percentiles_to_show:
-            pval = pcts[p]
+            pval = p_eff_vals[p]
             y_at_p = float(kde(np.array([pval]))[0])
             fig.add_trace(go.Scatter(
                 x=[pval, pval], y=[0, y_at_p],
@@ -700,8 +718,13 @@ def smoothed_ecdf_plot(data_1m, data_2m, title, xaxis_title):
     def _add_percentile_markers(vals, color, label_prefix=""):
         if vals is None or vals.size == 0:
             return
+        # Compute inverted percentile values for x according to oil&gas convention
+        p_eff_vals = {}
         for p in percentiles_to_show:
-            pval = float(np.percentile(vals, p))
+            eff_p = PCT_TO_X.get(p, p)
+            p_eff_vals[p] = float(np.percentile(vals, eff_p))
+        for p in percentiles_to_show:
+            pval = p_eff_vals[p]
             # ECDF value at pval
             y_at_p = float(np.mean(vals <= pval))
             # Vertical marker
@@ -813,6 +836,9 @@ def main():
     eur_2m_summary = empirical_summary(eur_2m_vals)
     ip90_2m_summary = empirical_summary(ip90_2m_vals_all)
 
+    # Adjusted: inversion for oil & gas convention in percentile calculations
+    # Percentiles chosen by user correspond to P10..P90, but will be inverted for calculations.
+
     # --- Tabs ---
     tab_uplift, tab_curves = st.tabs([
         "📊 Uplift Analysis", "📈 Type Curves"
@@ -887,10 +913,7 @@ def main():
 
         st.subheader("Full Incremental Results")
         disp_cols = ["uwi", "section_name", "n_comparators",
-                     "eur_bbl", "sixm_bpd", "sixm_bpd_incremental",
-                     "sixm_bpd_pct_uplift", "sixm_bpd_ratio",
-                     "twelvem_bpd", "twelvem_bpd_incremental",
-                     "twelvem_bpd_pct_uplift", "twelvem_bpd_ratio",
+                     "eur_bbl", "ip90_bpd", "sixm_bpd", "twelvem_bpd",
                      "waterflood_flag", "vintage_year"]
         disp_cols = [c for c in disp_cols if c in incr_df.columns]
         st.dataframe(incr_df[disp_cols], use_container_width=True, hide_index=True)
@@ -969,18 +992,21 @@ def main():
             ip90_pct = st.number_input(
                 "IP90 Percentile (X) — P(X)",
                 min_value=1, max_value=99, value=50, step=5,
-                help="E.g. 50 means the median 2-mile IP90 will be used as qi."
+                help="In oil & gas convention, P10 is optimistic and P90 is conservative. The value you pick is mapped inversely to the data percentile used for calculation."
             )
-            qi_from_pct = float(np.percentile(ip90_2m_vals, ip90_pct)) if len(ip90_2m_vals) > 2 else default_qi
+            # Inverted calculation: use 100 - ip90_pct
+            ip90_eff = 100 - ip90_pct
+            qi_from_pct = float(np.percentile(ip90_2m_vals, ip90_eff)) if len(ip90_2m_vals) > 2 else default_qi
             st.metric("Resulting qi (bbl/d)", f"{qi_from_pct:,.1f}")
 
         with builder_cols[1]:
             eur_pct = st.number_input(
                 "EUR Percentile (Y) — P(Y)",
                 min_value=1, max_value=99, value=50, step=5,
-                help="E.g. 50 means the median 2-mile EUR will be used as target EUR."
+                help="In oil & gas convention, P10 is optimistic and P90 is conservative. The value you pick is mapped inversely to the data percentile used for calculation."
             )
-            eur_from_pct = float(np.percentile(eur_2m_vals, eur_pct)) if len(eur_2m_vals) > 2 else 0.0
+            eur_eff = 100 - eur_pct
+            eur_from_pct = float(np.percentile(eur_2m_vals, eur_eff)) if len(eur_2m_vals) > 2 else 0.0
             st.metric("Resulting EUR (Mbbl)", f"{eur_from_pct/1000:,.1f}")
 
         # Build the user curve
@@ -1102,7 +1128,7 @@ def main():
             cats.append(f"Your Curve (P{ip90_pct}/P{eur_pct})")
             vals.append(user_curve["eur_actual_bbl"] / 1000)
             cols.append("#e74c3c")
-            fig_eurbar.add_trace(go.Bar(x=cats, y=vals, marker_color=cols,
+            fig_eurbar.add_trace(go.Bar(x=cats, y=Vals := vals, marker_color=cols,
                                          text=[f"{v:,.0f}" for v in vals],
                                          textposition="outside"))
             fig_eurbar.update_layout(**PLOTLY_LAYOUT, height=400,
