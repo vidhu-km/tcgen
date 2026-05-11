@@ -11,6 +11,7 @@ import geopandas as gpd
 import plotly.graph_objects as go
 from scipy.optimize import curve_fit
 from scipy.stats import gaussian_kde
+from scipy.interpolate import PchipInterpolator
 import streamlit as st
 
 warnings.filterwarnings("ignore")
@@ -198,7 +199,7 @@ def calc_eur_trap(t_arr, q_arr) -> float:
 
 
 REQUIRED_WELL_COLUMNS = [
-    "UWI", "Section Name", "Well Type", "Hz Length (m)",
+    "UWI", "Section Name", "Well Type", " Hz Length (m)",
     "Oil + Cond: EUR (Mbbl)", "Oil + Cond: IP 90 Cal. Rate (bbl/d)",
     "Oil + Cond: 6M Cal. Rate (bbl/d)", "Oil + Cond: 12M Cal. Rate (bbl/d)",
     "Objective", "On Prod Date", "On Inj Date", "FOOZ",
@@ -571,7 +572,7 @@ def load_and_assemble_wells():
 
 def make_density_plot_with_percentiles(
     data_1m, data_2m, title, xaxis_title,
-    percentiles_to_show=(10, 25, 50, 75, 90)
+    percentiles_to_show=(90, 75, 50, 25, 10)
 ):
     """Create a KDE density plot for 1M and 2M data with percentile vertical lines
     and enhanced tooltips (n, min/max/mean, percentiles)."""
@@ -648,6 +649,73 @@ def make_density_plot_with_percentiles(
     return fig
 
 
+def make_smoothed_ecdf_plot(data_1m, data_2m, title, xaxis_title):
+    """
+    Create a smoothed ECDF plot (monotone) for 1-Mile and 2-Mile data using a PCHIP interpolant
+    for smoothness and monotonicity.
+    """
+    def _ecdf_points(data):
+        vals = np.array([v for v in data if np.isfinite(v)], dtype=float)
+        if len(vals) == 0:
+            return None, None, None
+        vals_sorted = np.sort(vals)
+        n = len(vals_sorted)
+        y = np.arange(1, n + 1) / float(n)
+        # PCHIP interpolator will preserve monotonicity and give a smooth curve
+        interp = PchipInterpolator(vals_sorted, y)
+        return vals_sorted, y, interp
+
+    x1, y1, interp1 = _ecdf_points(data_1m)
+    x2, y2, interp2 = _ecdf_points(data_2m)
+
+    if interp1 is None and interp2 is None:
+        # Empty plots
+        fig = go.Figure()
+        fig.update_layout(**PLOTLY_LAYOUT, height=350, title=title, xaxis_title=xaxis_title, yaxis_title="ECDF")
+        return fig
+
+    xmin = None
+    xmax = None
+    if x1 is not None and x2 is not None:
+        xmin = min(x1[0], x2[0])
+        xmax = max(x1[-1], x2[-1])
+    elif x1 is not None:
+        xmin, xmax = x1[0], x1[-1]
+    elif x2 is not None:
+        xmin, xmax = x2[0], x2[-1]
+
+    if xmin is None or xmax is None:
+        xmin, xmax = 0.0, 1.0  # fallback
+
+    xgrid = np.linspace(xmin, xmax, 300)
+    fig = go.Figure()
+
+    if interp1 is not None:
+        ygrid1 = interp1(xgrid)
+        fig.add_trace(go.Scatter(
+            x=xgrid, y=ygrid1, mode="lines",
+            name="1-Mile ECDF (smoothed)",
+            line=dict(color=COLORS["1-Mile"], width=2)
+        ))
+    if interp2 is not None:
+        ygrid2 = interp2(xgrid)
+        fig.add_trace(go.Scatter(
+            x=xgrid, y=ygrid2, mode="lines",
+            name="2-Mile ECDF (smoothed)",
+            line=dict(color=COLORS["2-Mile"], width=2)
+        ))
+
+    fig.update_layout(
+        **PLOTLY_LAYOUT, height=350,
+        title=title,
+        xaxis_title=xaxis_title,
+        yaxis_title="ECDF",
+        hovermode="closest",
+    )
+    fig.update_yaxes(range=[0, 1])
+    return fig
+
+
 def main():
     st.title("🛢️ 2-Mile Uplift & Decline Analysis")
     st.caption(
@@ -715,6 +783,7 @@ def main():
 
     # Default qi = median 2-mile IP90
     ip90_2m_vals = df_2mile["ip90_bpd"].dropna().values
+    ip90_1m_vals = df_1mile["ip90_bpd"].dropna().values
     default_qi = float(np.median(ip90_2m_vals)) if len(ip90_2m_vals) > 0 else 150.0
 
     # Compute distributions for the type curve tab
@@ -839,6 +908,19 @@ def main():
             )
             st.plotly_chart(fig_ip90_dist, use_container_width=True)
 
+        # Smoothed ECDFs: add right under the distribution plots
+        st.subheader("Smoothed ECDF — EUR (1-Mile vs 2-Mile)")
+        ecdf_eur = make_smoothed_ecdf_plot(eur_1m_vals, eur_2m_vals,
+                                           title="Smoothed ECDF — EUR",
+                                           xaxis_title="EUR (bbl)")
+        st.plotly_chart(ecdf_eur, use_container_width=True)
+
+        st.subheader("Smoothed ECDF — IP90 (1-Mile vs 2-Mile)")
+        ecdf_ip90 = make_smoothed_ecdf_plot(ip90_1m_vals, ip90_2m_vals_all,
+                                            title="Smoothed ECDF — IP90",
+                                            xaxis_title="IP90 (bbl/d)")
+        st.plotly_chart(ecdf_ip90, use_container_width=True)
+
         # Summary stats table
         with st.expander("📊 Distribution Summary Statistics", expanded=False):
             sum_rows = []
@@ -849,9 +931,8 @@ def main():
                 s = empirical_summary(vals)
                 sum_rows.append({
                     "Metric": label, "n": s["n"],
-                    "P10": f"{s['q10']:,.0f}", "P25": f"{s['q25']:,.0f}",
-                    "P50": f"{s['q50']:,.0f}", "P75": f"{s['q75']:,.0f}",
-                    "P90": f"{s['q90']:,.0f}", "Mean": f"{s['mean']:,.0f}",
+                    "P90": f"{s['q90']:,.0f}", "P75": f"{s['q75']:,.0f}", "P50": f"{s['q50']:,.0f}", "P25": f"{s['q25']:,.0f}", "P10": f"{s['q10']:,.0f}",
+                    "Mean": f"{s['mean']:,.0f}",
                 })
             st.dataframe(pd.DataFrame(sum_rows), use_container_width=True, hide_index=True)
 
@@ -861,7 +942,7 @@ def main():
         st.subheader("🔧 Build Your Type Curve")
         st.markdown(
             "Select a percentile for **IP90** (determines qi) and a percentile for "
-            "**EUR** (determines the decline rate Di). The percentiles reference the "
+            "**EUR** (determines the decline). The percentiles reference the "
             "**2-mile** distributions shown above."
         )
 
@@ -872,7 +953,7 @@ def main():
                 min_value=1, max_value=99, value=50, step=5,
                 help="E.g. 50 means the median 2-mile IP90 will be used as qi."
             )
-            qi_from_pct = float(np.percentile(ip90_2m_vals_all, ip90_pct)) if len(ip90_2m_vals_all) > 2 else default_qi
+            qi_from_pct = float(np.percentile(ip90_2m_vals, ip90_pct)) if len(ip90_2m_vals) > 2 else default_qi
             st.metric("Resulting qi (bbl/d)", f"{qi_from_pct:,.1f}")
 
         with builder_cols[1]:
@@ -902,22 +983,6 @@ def main():
                 st.caption(f"Effective annual decline ≈ {di_nominal_pct:.1f}%")
             else:
                 st.info("Enter valid percentiles to generate a curve.")
-
-        # Contextual guidance
-        if user_curve is not None and not ratio_df.empty:
-            st.markdown("---")
-            st.markdown("**📏 How does your selection compare to observed uplift?**")
-            guide_cols = st.columns(4)
-            guide_cols[0].metric("Your qi / Median 1M IP90",
-                                 f"{qi_from_pct / np.median(ip90_1m_vals):.2f}x"
-                                 if len(ip90_1m_vals) > 0 else "—")
-            guide_cols[1].metric("Your EUR / Median 1M EUR",
-                                 f"{eur_from_pct / np.median(eur_1m_vals):.2f}x"
-                                 if len(eur_1m_vals) > 0 else "—")
-            guide_cols[2].metric("Observed IP90 GM Ratio", f"{gm_ip90:.2f}x" if np.isfinite(gm_ip90) else "—")
-            guide_cols[3].metric("Observed EUR GM Ratio", f"{gm_eur:.2f}x" if np.isfinite(gm_eur) else "—")
-
-        st.divider()
 
         # --- Rate-Time Plot ---
         st.subheader("Rate Type Curve — q(t)")
