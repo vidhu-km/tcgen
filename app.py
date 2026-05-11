@@ -751,7 +751,7 @@ def main():
         if well_df["nearest_injector_m"].notna().any():
             available.append("nearest_injector_m")
         active_features = st.sidebar.multiselect(
-            "Active features", available, default=available)
+            "Active features", available, default=[])
         if "section_ooip" in active_features:
             tolerances["section_ooip"] = st.sidebar.number_input(
                 "± OOIP tol", 0.0, 1e6, 250_000.0, 100_000.0)
