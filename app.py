@@ -629,7 +629,6 @@ def make_density_plot(data_1m, data_2m, title, xaxis_title,
         kde = gaussian_kde(vals, bw_method="scott")
         x_grid = np.linspace(vals.min() * 0.8, vals.max() * 1.2, 300)
         y_grid = kde(x_grid)
-        y_grid /= y_grid.max()  # normalise for comparison
 
         pvs = _pct_values(vals, percentiles)
         ptxt = " | ".join(f"P{p}={v:,.0f}" for p, v in pvs.items())
