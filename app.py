@@ -32,6 +32,7 @@ WATERFLOOD_BUFFER_M     = 200.0
 MILE_TO_M               = 1609.34
 CORRIDOR_HALF_WIDTH_M   = 900.0
 
+# Initial configuration values (can be overridden in UI)
 Q_LIMIT            = 2.0
 FLAT_MONTHS        = 1.44
 FLAT_DAYS          = int(round(FLAT_MONTHS * 30.4375))
@@ -155,7 +156,13 @@ def find_Di_for_eur_post(qi, eur_post, b, q_target, tol=1e-6):
     return 0.5 * (lo + hi)
 
 
-def build_piecewise_curve(qi, di, b, flat_days=FLAT_DAYS, q_limit=Q_LIMIT):
+def build_piecewise_curve(qi, di, b, flat_days=None, q_limit=None):
+    # flat_days and q_limit are now dynamic (can be set in UI)
+    if flat_days is None:
+        flat_days = int(round(FLAT_MONTHS * DAYS_PER_MONTH_AVG))
+    if q_limit is None:
+        q_limit = Q_LIMIT
+
     t_list = list(range(flat_days + 1))
     q_list = [qi] * (flat_days + 1)
     if di is not None and di > 0:
@@ -170,7 +177,13 @@ def build_piecewise_curve(qi, di, b, flat_days=FLAT_DAYS, q_limit=Q_LIMIT):
     return np.array(t_list, dtype=float), np.array(q_list, dtype=float)
 
 
-def build_curve_from_eur(qi, eur_bbl, b, flat_days=FLAT_DAYS, q_limit=Q_LIMIT):
+def build_curve_from_eur(qi, eur_bbl, b, flat_days=None, q_limit=None):
+    # Use dynamic values if provided; otherwise fall back to globals
+    if flat_days is None:
+        flat_days = int(round(FLAT_MONTHS * DAYS_PER_MONTH_AVG))
+    if q_limit is None:
+        q_limit = Q_LIMIT
+
     eur_flat = qi * flat_days
     eur_post = max(eur_bbl - eur_flat, 0.0)
     di = None
@@ -198,7 +211,7 @@ def calc_eur_trap(t_arr, q_arr) -> float:
 
 
 REQUIRED_WELL_COLUMNS = [
-    "UWI", "Section Name", "Well Type", "Hz Length (m)",
+    "UWI", "Section Name", "Well Type", " Hz Length (m)",
     "Oil + Cond: EUR (Mbbl)", "Oil + Cond: IP 90 Cal. Rate (bbl/d)",
     "Oil + Cond: 6M Cal. Rate (bbl/d)", "Oil + Cond: 12M Cal. Rate (bbl/d)",
     "Objective", "On Prod Date", "On Inj Date", "FOOZ",
@@ -569,87 +582,85 @@ def load_and_assemble_wells():
     return well_df, geoms
 
 
-def make_density_plot_with_percentiles(data_1m, data_2m, title, xaxis_title,
-                                       percentiles_to_show=(10, 25, 50, 75, 90)):
-    """Create a KDE density plot for 1M and 2M data with percentile vertical lines."""
+def make_ecdf_plot(data_1m, data_2m, title, xaxis_title):
+    """Create ECDF plots for 1-Mile and 2-Mile datasets."""
     fig = go.Figure()
 
-    datasets = [
-        (data_1m, "1-Mile", COLORS["1-Mile"]),
-        (data_2m, "2-Mile", COLORS["2-Mile"]),
-    ]
-
-    for data, label, color in datasets:
-        vals = np.array([v for v in data if np.isfinite(v)], dtype=float)
-        if len(vals) < 3:
-            continue
-
-        # Compute KDE
-        kde = gaussian_kde(vals, bw_method="scott")
-        x_min, x_max = vals.min() * 0.8, vals.max() * 1.2
-        x_grid = np.linspace(x_min, x_max, 300)
-        y_grid = kde(x_grid)
-        y_grid = y_grid / y_grid.max()
-
-        # Build hover text with percentile info
-        pcts = {p: float(np.percentile(vals, p)) for p in percentiles_to_show}
-        pct_text = " | ".join([f"P{p}={pcts[p]:,.0f}" for p in percentiles_to_show])
-
-        fig.add_trace(go.Scatter(
-            x=x_grid, y=y_grid, mode="lines", name=f"{label} (n={len(vals)})",
-            line=dict(color=color, width=2.5),
-            fill="tozeroy", opacity=0.3,
-            hovertemplate=(
-                f"<b>{label}</b><br>"
-                f"{xaxis_title}: %{{x:,.0f}}<br>"
-                f"Density: %{{y:.6f}}<br>"
-                f"<extra>{pct_text}</extra>"
-            ),
-        ))
-
-        # Add percentile vlines
-        for p in percentiles_to_show:
-            pval = pcts[p]
-            y_at_p = float(kde(np.array([pval]))[0])
-            fig.add_trace(go.Scatter(
-                x=[pval, pval], y=[0, y_at_p],
-                mode="lines",
-                line=dict(color=color, width=1, dash="dot"),
-                showlegend=False,
-                hovertemplate=f"{label} P{p} = {pval:,.0f}<extra></extra>",
-            ))
-            fig.add_annotation(
-                x=pval, y=y_at_p,
-                text=f"P{p}", showarrow=False,
-                font=dict(size=9, color=color),
-                yshift=10,
-            )
+    # 1-Mile ECDF
+    vals1 = np.array([v for v in data_1m if np.isfinite(v)], dtype=float)
+    if vals1.size > 0:
+        x1 = np.sort(vals1)
+        y1 = np.linspace(0.0, 1.0, num=vals1.size, endpoint=True)
+        fig.add_trace(go.Scatter(x=x1, y=y1, mode="lines",
+                                 name="1-Mile",
+                                 line=dict(color=COLORS["1-Mile"], width=2)))
+    # 2-Mile ECDF
+    vals2 = np.array([v for v in data_2m if np.isfinite(v)], dtype=float)
+    if vals2.size > 0:
+        x2 = np.sort(vals2)
+        y2 = np.linspace(0.0, 1.0, num=vals2.size, endpoint=True)
+        fig.add_trace(go.Scatter(x=x2, y=y2, mode="lines",
+                                 name="2-Mile",
+                                 line=dict(color=COLORS["2-Mile"], width=2)))
 
     fig.update_layout(
-        **PLOTLY_LAYOUT, height=400,
+        **PLOTLY_LAYOUT, height=350,
         title=title,
         xaxis_title=xaxis_title,
-        yaxis_title="Density",
+        yaxis_title="ECDF",
         hovermode="closest",
     )
-    fig.update_yaxes(rangemode="tozero")
     return fig
 
 
 def main():
+    global Q_LIMIT, FLAT_MONTHS, FLAT_DAYS, B_FIXED  # ensure we modify globals
     st.title("🛢️ 2-Mile Uplift & Decline Analysis")
     st.caption(
         "Compare 2-mile wells against 1-mile analogs to quantify uplift, "
         "then build custom type curves that reflect expected 2-mile performance."
     )
 
+    # Load data
     well_df, geoms = load_and_assemble_wells()
     df_1mile = well_df[well_df["lateral_group"] == "1-Mile"].reset_index(drop=True)
     df_2mile = well_df[well_df["lateral_group"] == "2-Mile"].reset_index(drop=True)
     rtc_curves = load_rtc_curves()
 
-    # --- Sidebar ---
+    # --- Dynamic UI: Configuration (Q_LIMIT, FLAT_MONTHS, B_FIXED) ---
     st.sidebar.title("⚙️ Configuration")
+
+    # Allow user to override core parameters
+    q_limit_input = st.sidebar.number_input(
+        "Q-limit (bbl/d)",
+        value=float(Q_LIMIT),
+        min_value=0.0,
+        max_value=1e4,
+        step=0.5,
+        key="q_limit_input"
+    )
+    flat_months_input = st.sidebar.number_input(
+        "Flat period (months)",
+        value=float(FLAT_MONTHS),
+        min_value=0.1,
+        max_value=60.0,
+        step=0.25,
+        key="flat_months_input"
+    )
+    b_fixed_input = st.sidebar.number_input(
+        "Fixed b parameter",
+        value=float(B_FIXED),
+        min_value=0.0,
+        max_value=5.0,
+        step=0.01,
+        key="b_fixed_input"
+    )
+
+    # Update dynamic defaults used downstream
+    Q_LIMIT = float(q_limit_input)
+    FLAT_MONTHS = float(flat_months_input)
+    FLAT_DAYS = int(round(FLAT_MONTHS * DAYS_PER_MONTH_AVG))
+    B_FIXED = float(b_fixed_input)
 
     analysis_mode = st.sidebar.radio(
         "Analog Matching Mode",
@@ -680,15 +691,17 @@ def main():
             "Corridor half-width (m)", 100.0, 3000.0, CORRIDOR_HALF_WIDTH_M, 100.0)
 
     st.sidebar.divider()
+
+    # Type Curve Settings (display current values and allow quick edits)
     st.sidebar.subheader("Type Curve Settings")
     st.sidebar.markdown(f"**b (fixed)** = `{B_FIXED}`")
     st.sidebar.markdown(
-        f"**flat period** = `{FLAT_DAYS} d` (≈{FLAT_MONTHS} mo)<br>"
+        f"**flat period** = `{FLAT_DAYS} d` (≈{FLAT_MONTHS:.2f} mo)<br>"
         f"**q-limit** = `{Q_LIMIT} bbl/d`",
         unsafe_allow_html=True,
     )
 
-    # --- Prepare core data ---
+    # --- Prepare core data (unchanged) ---
     cohort_map = build_cohort_map(df_2mile, df_1mile, geoms, analysis_mode,
                                   tolerances, active_features, corridor_width)
 
@@ -705,14 +718,21 @@ def main():
     ip90_2m_vals = df_2mile["ip90_bpd"].dropna().values
     default_qi = float(np.median(ip90_2m_vals)) if len(ip90_2m_vals) > 0 else 150.0
 
-    # Compute distributions for the type curve tab
+    # Compute distributions for the type curve tab (ECDF)
     eur_1m_vals = df_1mile["eur_bbl"].dropna().values
     eur_2m_vals = df_2mile["eur_bbl"].dropna().values
+
     ip90_1m_vals = df_1mile["ip90_bpd"].dropna().values
-    ip90_2m_vals_all = df_2mile["ip90_bpd"].dropna().values
+    ip90_2m_vals = df_2mile["ip90_bpd"].dropna().values
+
+    sixm_1m_vals = df_1mile["sixm_bpd"].dropna().values
+    sixm_2m_vals = df_2mile["sixm_bpd"].dropna().values
+
+    twelvem_1m_vals = df_1mile["twelvem_bpd"].dropna().values
+    twelvem_2m_vals = df_2mile["twelvem_bpd"].dropna().values
 
     eur_2m_summary = empirical_summary(eur_2m_vals)
-    ip90_2m_summary = empirical_summary(ip90_2m_vals_all)
+    ip90_2m_summary = empirical_summary(ip90_2m_vals)
 
     # --- Tabs ---
     tab_uplift, tab_curves = st.tabs([
@@ -808,38 +828,60 @@ def main():
             "displayed alongside corporate reference type curves (RTCs)."
         )
 
-        # --- Distribution Plots ---
-        st.subheader("Performance Distributions — 1-Mile vs 2-Mile")
+        # --- Distribution Plots (ECDFs) ---
+        st.subheader("Performance Distributions — ECDF (1-Mile vs 2-Mile)")
 
+        # 4 ECDFs in a 2x2 grid
         col_a, col_b = st.columns(2)
         with col_a:
-            fig_eur_dist = make_density_plot_with_percentiles(
+            fig_eur_ecdf = make_ecdf_plot(
                 eur_1m_vals, eur_2m_vals,
-                title="EUR Distribution",
-                xaxis_title="EUR (bbl)",
+                title="EUR ECDF",
+                xaxis_title="EUR (bbl)"
             )
-            st.plotly_chart(fig_eur_dist, use_container_width=True)
+            st.plotly_chart(fig_eur_ecdf, use_container_width=True)
         with col_b:
-            fig_ip90_dist = make_density_plot_with_percentiles(
-                ip90_1m_vals, ip90_2m_vals_all,
-                title="IP90 Distribution",
-                xaxis_title="IP90 (bbl/d)",
+            fig_ip90_ecdf = make_ecdf_plot(
+                ip90_1m_vals, ip90_2m_vals,
+                title="IP90 ECDF",
+                xaxis_title="IP90 (bbl/d)"
             )
-            st.plotly_chart(fig_ip90_dist, use_container_width=True)
+            st.plotly_chart(fig_ip90_ecdf, use_container_width=True)
+
+        col_c, col_d = st.columns(2)
+        with col_c:
+            fig_sixm_ecdf = make_ecdf_plot(
+                sixm_1m_vals, sixm_2m_vals,
+                title="6M Cal. Rate ECDF",
+                xaxis_title="Six-month Cal. Rate (bbl/d)"
+            )
+            st.plotly_chart(fig_sixm_ecdf, use_container_width=True)
+        with col_d:
+            fig_twelvem_ecdf = make_ecdf_plot(
+                twelvem_1m_vals, twelvem_2m_vals,
+                title="12M Cal. Rate ECDF",
+                xaxis_title="12M Cal. Rate (bbl/d)"
+            )
+            st.plotly_chart(fig_twelvem_ecdf, use_container_width=True)
 
         # Summary stats table
         with st.expander("📊 Distribution Summary Statistics", expanded=False):
             sum_rows = []
-            for label, vals in [("1-Mile EUR (bbl)", eur_1m_vals),
-                                ("2-Mile EUR (bbl)", eur_2m_vals),
-                                ("1-Mile IP90 (bbl/d)", ip90_1m_vals),
-                                ("2-Mile IP90 (bbl/d)", ip90_2m_vals_all)]:
-                s = empirical_summary(vals)
+            metric_pairs = [
+                ("1-Mile EUR (bbl)", eur_1m_vals, "2-Mile EUR (bbl)", eur_2m_vals),
+                ("1-Mile IP90 (bbl/d)", ip90_1m_vals, "2-Mile IP90 (bbl/d)", ip90_2m_vals),
+                ("1-Mile 6M (bbl/d)", sixm_1m_vals, "2-Mile 6M (bbl/d)", sixm_2m_vals),
+                ("1-Mile 12M (bbl/d)", twelvem_1m_vals, "2-Mile 12M (bbl/d)", twelvem_2m_vals),
+            ]
+            for label1, vals1, label2, vals2 in metric_pairs:
+                s1 = empirical_summary(vals1)
+                s2 = empirical_summary(vals2)
                 sum_rows.append({
-                    "Metric": label, "n": s["n"],
-                    "P10": f"{s['q10']:,.0f}", "P25": f"{s['q25']:,.0f}",
-                    "P50": f"{s['q50']:,.0f}", "P75": f"{s['q75']:,.0f}",
-                    "P90": f"{s['q90']:,.0f}", "Mean": f"{s['mean']:,.0f}",
+                    "Metric": f"{label1} / {label2}",
+                    "N1": s1["n"], "P10_1": s1["q10"], "P25_1": s1["q25"],
+                    "P50_1": s1["q50"], "P75_1": s1["q75"], "P90_1": s1["q90"], "Mean_1": s1["mean"],
+                    "N2": s2["n"], "P10_2": s2["q10"], "P25_2": s2["q25"],
+                    "P50_2": s2["q50"], "P75_2": s2["q75"], "P90_2": s2["q90"], "Mean_2": s2["mean"],
                 })
             st.dataframe(pd.DataFrame(sum_rows), use_container_width=True, hide_index=True)
 
@@ -860,7 +902,7 @@ def main():
                 min_value=1, max_value=99, value=50, step=5,
                 help="E.g. 50 means the median 2-mile IP90 will be used as qi."
             )
-            qi_from_pct = float(np.percentile(ip90_2m_vals_all, ip90_pct)) if len(ip90_2m_vals_all) > 2 else default_qi
+            qi_from_pct = float(np.percentile(ip90_2m_vals, ip90_pct)) if len(ip90_2m_vals) > 2 else default_qi
             st.metric("Resulting qi (bbl/d)", f"{qi_from_pct:,.1f}")
 
         with builder_cols[1]:
