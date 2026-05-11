@@ -614,6 +614,7 @@ def make_ecdf_plot(data_1m, data_2m, title, xaxis_title):
 
 
 def main():
+    global Q_LIMIT, FLAT_MONTHS, FLAT_DAYS, B_FIXED  # ensure we modify globals
     st.title("🛢️ 2-Mile Uplift & Decline Analysis")
     st.caption(
         "Compare 2-mile wells against 1-mile analogs to quantify uplift, "
