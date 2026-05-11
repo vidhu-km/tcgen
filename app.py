@@ -652,28 +652,73 @@ def make_density_plot_with_percentiles(
 def make_smoothed_ecdf_plot(data_1m, data_2m, title, xaxis_title):
     """
     Create a smoothed ECDF plot (monotone) for 1-Mile and 2-Mile data using a PCHIP interpolant
-    for smoothness and monotonicity.
+    built on strictly increasing (unique) ECDF points. Handles duplicates in the data.
     """
+
     def _ecdf_points(data):
         vals = np.array([v for v in data if np.isfinite(v)], dtype=float)
         if len(vals) == 0:
             return None, None, None
+
         vals_sorted = np.sort(vals)
         n = len(vals_sorted)
-        y = np.arange(1, n + 1) / float(n)
-        # PCHIP interpolator will preserve monotonicity and give a smooth curve
-        interp = PchipInterpolator(vals_sorted, y)
-        return vals_sorted, y, interp
 
+        # Build ECDF at unique x-values (collapse duplicates)
+        x_unique = []
+        y_ecdf = []
+        i = 0
+        while i < n:
+            v = vals_sorted[i]
+            j = i
+            # move to the last index where value == v
+            while j + 1 < n and vals_sorted[j + 1] == v:
+                j += 1
+            x_unique.append(v)
+            # ECDF value at the last occurrence of v
+            y_ecdf.append((j + 1) / n)
+            i = j + 1
+
+        x_unique = np.asarray(x_unique)
+        y_ecdf = np.asarray(y_ecdf)
+
+        # If we have fewer than 2 unique points, provide a safe fallback interpolator
+        if x_unique.size < 2:
+            min_v = x_unique[0]
+            max_v = x_unique[-1]
+
+            def interp_fallback(xgrid):
+                if max_v == min_v:
+                    # All data equal: jump from 0 to 1 at min_v (approximate)
+                    return np.where(xgrid < min_v, 0.0, 1.0)
+                # Simple linear ramp between min and max
+                return np.clip((xgrid - min_v) / (max_v - min_v), 0.0, 1.0)
+
+            return x_unique, y_ecdf, interp_fallback
+
+        # Normal case: at least 2 unique points, use PCHIP on the unique points
+        interp = PchipInterpolator(x_unique, y_ecdf)
+        return x_unique, y_ecdf, interp
+
+    def _safe_eval(interp, xgrid, fallback=None):
+        if interp is None:
+            if callable(fallback):
+                return fallback(xgrid)
+            else:
+                return None
+        return interp(xgrid)
+
+    # Build data for both datasets
     x1, y1, interp1 = _ecdf_points(data_1m)
     x2, y2, interp2 = _ecdf_points(data_2m)
 
     if interp1 is None and interp2 is None:
-        # Empty plots
         fig = go.Figure()
-        fig.update_layout(**PLOTLY_LAYOUT, height=350, title=title, xaxis_title=xaxis_title, yaxis_title="ECDF")
+        fig.update_layout(**PLOTLY_LAYOUT, height=350, title=title,
+                          xaxis_title=xaxis_title, yaxis_title="ECDF",
+                          hovermode="closest")
         return fig
 
+    # Determine x grid domain
     xmin = None
     xmax = None
     if x1 is not None and x2 is not None:
@@ -691,14 +736,14 @@ def make_smoothed_ecdf_plot(data_1m, data_2m, title, xaxis_title):
     fig = go.Figure()
 
     if interp1 is not None:
-        ygrid1 = interp1(xgrid)
+        ygrid1 = interp1(xgrid) if callable(interp1) else interp1(xgrid)
         fig.add_trace(go.Scatter(
             x=xgrid, y=ygrid1, mode="lines",
             name="1-Mile ECDF (smoothed)",
             line=dict(color=COLORS["1-Mile"], width=2)
         ))
     if interp2 is not None:
-        ygrid2 = interp2(xgrid)
+        ygrid2 = interp2(xgrid) if callable(interp2) else interp2(xgrid)
         fig.add_trace(go.Scatter(
             x=xgrid, y=ygrid2, mode="lines",
             name="2-Mile ECDF (smoothed)",
